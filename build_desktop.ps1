@@ -1,3 +1,4 @@
+﻿# Save as UTF-8 with BOM for Windows PowerShell 5.1.
 param([switch]$SkipZip, [string]$OutputRoot = 'dist')
 $ErrorActionPreference = 'Stop'
 $taskRoot = $PSScriptRoot
@@ -11,6 +12,8 @@ if (!(Test-Path -LiteralPath $taskPython)) { throw 'Run python -m venv venv, the
 $env:PYINSTALLER_CONFIG_DIR = Join-Path $taskRoot 'build\pyinstaller-cache'
 $env:PLAYWRIGHT_SKIP_BROWSER_GC = '1'
 $env:PYTHONIOENCODING = 'utf-8'
+# Windows PowerShell 5.1 otherwise replaces piped Chinese source with question marks.
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $taskBrowserRoot = Join-Path $taskRoot 'build-resources\browsers'
 New-Item -ItemType Directory -Path $taskBrowserRoot -Force | Out-Null
 $taskBrowserInfo = & $taskPython -c "import json,pathlib,patchright; p=pathlib.Path(patchright.__file__).parent/'driver/package/browsers.json'; print(json.dumps(json.loads(p.read_text())['browsers']))"

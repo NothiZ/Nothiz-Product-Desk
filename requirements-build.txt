@@ -1,0 +1,3 @@
+-r requirements.txt
+patchright==1.64.4
+pyinstaller==6.22.3

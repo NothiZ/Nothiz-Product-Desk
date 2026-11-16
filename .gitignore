@@ -1,0 +1,44 @@
+# Python environments and caches
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build output and local diagnostics
+/build/
+/dist/
+/build-resources/
+/debug/
+*.log
+*.jsonl
+
+# Local editor and Windows files
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+
+# API keys and local configuration
+.env
+*.env
+.env.*
+!.env.example
+settings.json
+settings.json.tmp
+
+# Browser login state and background-worker files
+*_state.json
+*_auth.json
+task.json
+result.json
+response-*.json
+/jobs/
+/ProductDetailsDesktop/
+
+# Product input, output and backup workbooks
+*.xlsx
+*.xls
+*.xlsm

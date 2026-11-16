@@ -5,6 +5,7 @@ from PyInstaller.utils.hooks import collect_all
 
 root = Path(SPECPATH)
 datas = [(str(root / "build-resources" / "browsers"), "browsers"),
+         (str(root / "assets" / "logo.ico"), "assets"),
          (str(root / "tests" / "fixtures" / "alibaba_1601683518137.html"), "selftest")]
 # This Python runtime loads a CA sidecar before any HTTPS connection is created.
 ssl_sidecar = Path(ssl.__file__).with_name("codex-rejected-cas.pem")
@@ -28,5 +29,6 @@ for collection in (a.datas, a.binaries):
                      if not Path(entry[0]).as_posix().startswith("playwright/driver/")]
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="ProductDetailsDesktop", debug=False,
-          strip=False, upx=False, console=False, disable_windowed_traceback=False)
+          strip=False, upx=False, console=False, disable_windowed_traceback=False,
+          icon=str(root / "assets" / "logo.ico"))
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="ProductDetailsDesktop")

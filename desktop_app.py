@@ -10,7 +10,7 @@ from ui_theme import CARD, apply_theme, enable_dpi_awareness, style_log
 
 from desktop_runtime import (
     APP_TITLE, default_settings, launch_job, load_settings, save_settings,
-    validate_generation,
+    resource_dir, validate_generation,
 )
 
 
@@ -19,8 +19,13 @@ class DesktopApp(tk.Tk):
     TEMPLATES = {"模板 1 · Key: Value 列表": "template1", "模板 2 · Details + Specifications": "template2"}
 
     def __init__(self):
+        # Give the app its own Windows taskbar group instead of Python's.
+        if os.name == "nt":
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ProductDetailsDesktop.App")
         super().__init__()
         self.title(APP_TITLE)
+        self.iconbitmap(default=str(resource_dir() / "assets" / "logo.ico"))
         width = min(980, self.winfo_screenwidth() - 80)
         height = min(800, self.winfo_screenheight() - 100)
         self.geometry(f"{width}x{height}")

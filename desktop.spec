@@ -22,6 +22,10 @@ a = Analysis([str(root / "desktop_app.py")], pathex=[str(root)], binaries=binari
              hiddenimports=hiddenimports + ["openpyxl", "desktop_worker", "login", "run"],
              excludes=["IPython", "pytest", "matplotlib", "scipy", "PyQt5", "PySide6"],
              noarchive=False)
+# Scrapling launches Patchright; filter Playwright's unused driver after its hooks run.
+for collection in (a.datas, a.binaries):
+    collection[:] = [entry for entry in collection
+                     if not Path(entry[0]).as_posix().startswith("playwright/driver/")]
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="ProductDetailsDesktop", debug=False,
           strip=False, upx=False, console=False, disable_windowed_traceback=False)

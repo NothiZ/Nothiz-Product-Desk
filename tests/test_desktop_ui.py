@@ -11,7 +11,6 @@ class DesktopUiTests(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(importlib.util.find_spec("desktop_app"), "Desktop window has not been implemented")
         self.module = importlib.import_module("desktop_app")
-        self.module.enable_dpi_awareness()
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.env = patch.dict(os.environ, {"PRODUCT_DETAILS_DATA_DIR": self.temp.name})
@@ -28,21 +27,72 @@ class DesktopUiTests(unittest.TestCase):
         self.app = self.module.DesktopApp()
         self.app.withdraw()
         self.app.update_idletasks()
-        self.addCleanup(self.app.destroy)
+        self.addCleanup(self.destroy_app, self.app)
         self.app.input_var.set(str(Path(self.temp.name) / "products.xlsx"))
         self.app.output_var.set(str(Path(self.temp.name) / "output.xlsx"))
         self.app.key_var.set("test-key")
+
+    def destroy_app(self, app):
+        # Child CTk widgets still own their Tcl commands after timer cancellation.
+        for callback in app.tk.call("after", "info"):
+            app.tk.call("after", "cancel", callback)
+        app.destroy()
+
+    def test_normal_entrypoint_opens_the_window(self):
+        with patch("sys.argv", ["desktop_app.py"]), patch.object(self.module, "DesktopApp", return_value=self.app) as window, patch.object(self.app, "mainloop") as mainloop:
+            self.assertEqual(self.module.main(), 0)
+        window.assert_called_once_with()
+        mainloop.assert_called_once_with()
+
+    def test_input_status_follows_file_changes_without_overwriting_running_status(self):
+        source = Path(self.temp.name) / "selected.xlsx"
+        source.touch()
+        with patch.object(self.module.filedialog, "askopenfilename", return_value=str(source)):
+            self.app.choose_input()
+        self.assertIn("已选择 selected.xlsx", self.app.status_label.cget("text"))
+        self.app.input_var.set("")
+        self.assertIn("请选择 Excel 文件", self.app.status_label.cget("text"))
+        self.app.input_var.set(str(source.with_name("missing.xlsx")))
+        self.assertIn("文件不存在", self.app.status_label.cget("text"))
+        self.app.task = self.task
+        self.app._status("正在处理商品…")
+        self.app.input_var.set(str(source))
+        self.assertIn("正在处理商品", self.app.status_label.cget("text"))
+
+    def test_saved_input_file_sets_the_initial_status(self):
+        source = Path(self.temp.name) / "saved.xlsx"
+        source.touch()
+        with patch.object(self.module, "load_settings", return_value={"input_file": str(source)}):
+            restarted = self.module.DesktopApp()
+        restarted.withdraw()
+        self.addCleanup(self.destroy_app, restarted)
+        self.assertIn("已选择 saved.xlsx", restarted.status_label.cget("text"))
+
+    def test_zero_progress_blends_into_track_and_positive_progress_is_blue(self):
+        self.assertEqual(self.app.progress.get(), 0)
+        self.assertEqual(self.app.progress.cget("progress_color"), self.app.progress.cget("fg_color"))
+        self.app._progress(1, 2)
+        self.assertEqual(self.app.progress.get(), 0.5)
+        self.assertEqual(self.app.progress.cget("progress_color"), self.module.ACCENT)
+        self.app._progress(0, 1)
+        self.assertEqual(self.app.progress.get(), 0)
+        self.assertEqual(self.app.progress.cget("progress_color"), self.app.progress.cget("fg_color"))
 
     def test_start_tracks_background_work_and_stop_keeps_window_alive(self):
         with patch.object(self.module, "validate_generation", side_effect=lambda settings, key: settings):
             self.app.start_generation()
         self.assertEqual(self.launch.call_args.kwargs["api_key"], "test-key")
-        self.assertEqual(str(self.app.start_button["state"]), "disabled")
+        self.assertEqual(self.app.start_button.cget("state"), "disabled")
         self.task.read_updates.return_value = [{"type": "progress", "total": 5, "done": 2, "failed": 1}]
         self.app.poll_task()
-        self.assertIn("2", self.app.counts_var.get())
+        self.assertIn("成功 2", self.app.counts_label.cget("text"))
+        self.assertAlmostEqual(self.app.progress.get(), 0.6)
+        self.assertIn("正在处理商品", self.app.status_label.cget("text"))
+        self.assertNotIn("读取任务状态失败", self.app.log_text.get("1.0", "end"))
         self.app.stop_task()
         self.task.request_stop.assert_called_once()
+        self.app.poll_task()
+        self.assertIn("正在停止", self.app.status_label.cget("text"))
         self.assertTrue(self.app.winfo_exists())
 
     def test_provider_switch_preserves_keys_and_models_without_remembering(self):
@@ -68,7 +118,7 @@ class DesktopUiTests(unittest.TestCase):
             restarted = self.module.DesktopApp()
         restarted.withdraw()
         restarted.update_idletasks()
-        self.addCleanup(restarted.destroy)
+        self.addCleanup(self.destroy_app, restarted)
         self.assertEqual(restarted.model_var.get(), "gemini-custom")
         restarted.provider_var.set("DeepSeek")
         restarted.change_provider()
@@ -91,7 +141,7 @@ class DesktopUiTests(unittest.TestCase):
             self.app.poll_task()
         self.assertIsNone(self.app.task)
         self.assertIn("worker.log", error.call_args.args[1])
-        self.assertEqual(str(self.app.start_button["state"]), "normal")
+        self.assertEqual(self.app.start_button.cget("state"), "normal")
 
     def test_close_can_be_cancelled_then_waits_for_worker_to_save(self):
         self.app.start_login("alibaba")
@@ -113,7 +163,7 @@ class DesktopUiTests(unittest.TestCase):
         with patch.object(self.module.messagebox, "showerror") as error:
             self.app.start_login("tmall")
         self.assertIsNone(self.app.task)
-        self.assertEqual(str(self.app.start_button["state"]), "normal")
+        self.assertEqual(self.app.start_button.cget("state"), "normal")
         self.assertIn("无法启动", error.call_args.args[1])
 
     def test_failed_stop_allows_user_to_try_closing_again(self):
@@ -126,8 +176,9 @@ class DesktopUiTests(unittest.TestCase):
     def test_small_screen_keeps_log_and_actions_visible(self):
         with patch.object(self.module.DesktopApp, "winfo_screenheight", return_value=720), patch.object(self.module.DesktopApp, "winfo_screenwidth", return_value=1280):
             small = self.module.DesktopApp()
-        self.addCleanup(small.destroy)
-        small.update()
+        self.addCleanup(self.destroy_app, small)
+        small.after(300, small.quit)
+        small.mainloop()
         self.assertGreaterEqual(small.log_text.winfo_height(), 60)
         self.assertLess(small.start_button.winfo_rooty() + small.start_button.winfo_height(), small.winfo_rooty() + small.winfo_height())
 

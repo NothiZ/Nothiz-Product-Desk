@@ -4,9 +4,10 @@ import multiprocessing
 import os
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
-from tkinter.scrolledtext import ScrolledText
-from ui_theme import BG, CARD, add_log_tags, apply_theme, enable_dpi_awareness, log_tag, style_log
+from tkinter import filedialog, messagebox
+
+import customtkinter as ctk
+from PIL import Image
 
 from desktop_runtime import (
     APP_TITLE, default_settings, launch_job, load_settings, save_settings,
@@ -14,7 +15,25 @@ from desktop_runtime import (
 )
 
 
-class DesktopApp(tk.Tk):
+BG, CARD, BORDER = "#F4F6FA", "#FFFFFF", "#E3E7EE"
+TEXT, MUTED = "#1F2937", "#6B7280"
+ACCENT, ACCENT_HOVER, ACCENT_OFF = "#2563EB", "#1D4ED8", "#A9BEEF"
+OK, ERR = "#059669", "#DC2626"
+FONT = "Microsoft YaHei UI"
+
+
+def log_tag(message):
+    m = str(message)
+    if any(k in m for k in ("失败", "错误", "Error", "Traceback", "Exception")):
+        return "err"
+    if any(k in m for k in ("✔", "已保存", "已完成", "已停止")):
+        return "ok"
+    if m.startswith("[20") or " INFO" in m:
+        return "dim"
+    return ""
+
+
+class DesktopApp(ctk.CTk):
     PROVIDERS = {"DeepSeek": "deepseek", "Gemini": "gemini"}
     TEMPLATES = {"模板 1 · Key: Value 列表": "template1", "模板 2 · Details + Specifications": "template2"}
 
@@ -23,21 +42,23 @@ class DesktopApp(tk.Tk):
         if os.name == "nt":
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ProductDetailsDesktop.App")
-        super().__init__()
+        ctk.set_appearance_mode("light")
+        super().__init__(fg_color=BG)
         self.title(APP_TITLE)
-        self.iconbitmap(default=str(resource_dir() / "assets" / "logo.ico"))
-        k = max(1.0, self.winfo_fpixels("1i") / 96)  # 高分屏缩放
-        width = min(int(980 * k), self.winfo_screenwidth() - 80)
-        height = min(int(820 * k), self.winfo_screenheight() - 100)
+        icon = str(resource_dir() / "assets" / "logo.ico")
+
+        def set_icon():
+            try:
+                self.iconbitmap(icon)
+            except tk.TclError:
+                pass
+
+        set_icon()
+        self.after(250, set_icon)  # CustomTkinter 会在启动后覆盖图标，延后再设一次
+        width = min(980, self.winfo_screenwidth() - 80)
+        height = min(840, self.winfo_screenheight() - 100)
         self.geometry(f"{width}x{height}")
-        self.minsize(min(int(860 * k), width), min(int(720 * k), height))
-        style = apply_theme(self)
-        style.configure("CardBody.TFrame", background=CARD)
-        if height < 720:
-            style.configure("TButton", padding=(12, 4))
-            style.configure("Accent.TButton", padding=(18, 4))
-            style.configure("TEntry", padding=(8, 3))
-            style.configure("TCombobox", padding=(8, 3))
+        self.minsize(min(860, width), min(720, height))
         self.settings = default_settings()
         startup_error = ""
         try:
@@ -69,130 +90,174 @@ class DesktopApp(tk.Tk):
         self.template_var = tk.StringVar(value=next((label for label, value in self.TEMPLATES.items() if value == self.settings.get("template")), list(self.TEMPLATES)[1]))
         self.resume_var = tk.BooleanVar(value=self.settings.get("resume", True))
         self.browser_var = tk.BooleanVar(value=self.settings.get("show_browser", True))
-        self.status_var = tk.StringVar(value="就绪 · 选择 Excel 文件后开始生成")
-        self.counts_var = tk.StringVar(value="待处理 0  ·  成功 0  ·  失败 0")
         self._build_window(compact=height < 720)
+        self.input_var.trace_add("write", self._refresh_input_status)
         self.protocol("WM_DELETE_WINDOW", self.close_window)
         if startup_error:
             self.append_log(startup_error)
 
     def _build_window(self, compact=False):
-        root = ttk.Frame(self, padding=(16, 10) if compact else (28, 20, 28, 16))
-        root.pack(fill="both", expand=True)
-        root.columnconfigure(0, weight=1)
-        root.rowconfigure(8, weight=1)
+        gap = 2 if compact else 7
+        h = 30 if compact else 36  # 控件高度
+        font = lambda size, bold=False: ctk.CTkFont(family=FONT, size=size, weight="bold" if bold else "normal")
+        root = ctk.CTkFrame(self, fg_color="transparent")
+        root.pack(fill="both", expand=True, padx=16 if compact else 28, pady=(10, 10) if compact else (20, 16))
+        root.grid_columnconfigure(0, weight=1)
+        root.grid_rowconfigure(8, weight=1)
+
+        def text(parent, value, size=13, bold=False, color=TEXT, **kw):
+            return ctk.CTkLabel(parent, text=value, font=font(size, bold), text_color=color, **kw)
 
         def section(row, title, pady=(14, 6)):
-            ttk.Label(root, text=title, style="Section.TLabel").grid(row=row, column=0, sticky="w", pady=(6, 3) if compact else pady)
+            text(root, title, 14, True).grid(row=row, column=0, sticky="w", pady=(6, 3) if compact else pady)
 
         def card(row):
-            frame = ttk.Frame(root, style="Card.TFrame", padding=(12, 6) if compact else (18, 12))
+            frame = ctk.CTkFrame(root, fg_color=CARD, corner_radius=12, border_width=1, border_color=BORDER)
             frame.grid(row=row, column=0, sticky="nsew" if row == 8 else "ew")
             return frame
 
-        header = ttk.Frame(root)
+        def entry(parent, **kw):
+            return ctk.CTkEntry(parent, height=h, corner_radius=8, fg_color=CARD, border_color=BORDER,
+                                text_color=TEXT, font=font(13), **kw)
+
+        def combo(parent, **kw):
+            return ctk.CTkComboBox(parent, height=h, corner_radius=8, state="readonly", fg_color=CARD,
+                                   border_color=BORDER, button_color=BORDER, button_hover_color="#D5DAE3",
+                                   text_color=TEXT, dropdown_fg_color=CARD, dropdown_text_color=TEXT,
+                                   dropdown_hover_color="#EEF2F9", font=font(13), dropdown_font=font(13), **kw)
+
+        def check(parent, label, variable, command=None):
+            return ctk.CTkCheckBox(parent, text=label, variable=variable, command=command, font=font(13),
+                                   text_color=TEXT, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                                   border_color="#B8C0CE", corner_radius=5, checkbox_width=20, checkbox_height=20)
+
+        def button(parent, label, command, primary=False):
+            if primary:
+                return ctk.CTkButton(parent, text=label, command=command, height=h + 2, corner_radius=8, width=110,
+                                     fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="#FFFFFF",
+                                     text_color_disabled="#FFFFFF", font=font(13, True))
+            return ctk.CTkButton(parent, text=label, command=command, height=h, corner_radius=8, width=88,
+                                 fg_color=CARD, hover_color="#EEF2F9", text_color=TEXT, text_color_disabled="#A0A7B4",
+                                 border_width=1, border_color="#D5DAE3", font=font(13))
+
+        header = ctk.CTkFrame(root, fg_color="transparent")
         header.grid(row=0, column=0, sticky="w")
         try:
-            # Display the 512px source logo at 64px in the header.
-            self.logo = tk.PhotoImage(file=str(resource_dir() / "assets" / "logo.png")).subsample(8)
-            tk.Label(header, image=self.logo, bg=BG, bd=0).grid(row=0, column=0, rowspan=2, padx=(0, 14))
-        except tk.TclError:
+            size = 36 if compact else 48
+            self.logo = ctk.CTkImage(Image.open(resource_dir() / "assets" / "logo.png"), size=(size, size))
+            ctk.CTkLabel(header, image=self.logo, text="").grid(row=0, column=0, rowspan=2, padx=(0, 14))
+        except Exception:
             pass
-        ttk.Label(header, text="产品详情生成", style="Title.TLabel").grid(row=0, column=1, sticky="w")
-        ttk.Label(header, text="导入商品链接，生成中英文标题与详情。首次使用请先登录商品平台。", style="Sub.TLabel").grid(row=1, column=1, sticky="w")
+        text(header, "产品详情生成", 20 if compact else 24, True).grid(row=0, column=1, sticky="w")
+        if not compact:  # 小屏省掉副标题，把空间留给日志
+            text(header, "导入商品链接，生成中英文标题与详情。首次使用请先登录商品平台。", 13, color=MUTED).grid(row=1, column=1, sticky="w")
 
         section(1, "Excel 文件")
         files = card(2)
-        files.columnconfigure(1, weight=1)
-        files.columnconfigure(0, minsize=72)
+        files.grid_columnconfigure(1, weight=1)
+        files.grid_columnconfigure(0, minsize=84)
         for row, label, variable, callback in [(0, "输入文件", self.input_var, self.choose_input), (1, "输出文件", self.output_var, self.choose_output)]:
-            ttk.Label(files, text=label, style="Muted.TLabel").grid(row=row, column=0, sticky="w", pady=5)
-            entry = ttk.Entry(files, textvariable=variable)
-            entry.grid(row=row, column=1, sticky="ew", pady=5)
-            button = ttk.Button(files, text="选择…", command=callback)
-            button.grid(row=row, column=2, padx=(12, 0), pady=5)
-            self.editable_widgets.extend([(entry, "normal"), (button, "normal")])
+            text(files, label, color=MUTED).grid(row=row, column=0, sticky="w", padx=(18, 0), pady=gap)
+            field = entry(files, textvariable=variable)
+            field.grid(row=row, column=1, sticky="ew", pady=gap)
+            choose = button(files, "选择…", callback)
+            choose.grid(row=row, column=2, padx=(12, 18), pady=gap)
+            self.editable_widgets.extend([(field, "normal"), (choose, "normal")])
 
         section(3, "生成设置")
         settings = card(4)
-        settings.columnconfigure(1, weight=1)
-        settings.columnconfigure(3, weight=1)
-        settings.columnconfigure(0, minsize=72)
-        ttk.Label(settings, text="AI 服务", style="Muted.TLabel").grid(row=0, column=0, sticky="w", pady=5)
-        provider = ttk.Combobox(settings, textvariable=self.provider_var, values=list(self.PROVIDERS), state="readonly", width=15)
-        provider.grid(row=0, column=1, sticky="ew", pady=5)
-        provider.bind("<<ComboboxSelected>>", self.change_provider)
-        ttk.Label(settings, text="模型", style="Muted.TLabel").grid(row=0, column=2, padx=(16, 8))
-        model = ttk.Entry(settings, textvariable=self.model_var)
-        model.grid(row=0, column=3, sticky="ew", pady=5)
-        ttk.Label(settings, text="API Key", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=5)
-        key = ttk.Entry(settings, textvariable=self.key_var, show="●")
-        key.grid(row=1, column=1, columnspan=2, sticky="ew", pady=5)
-        remember = ttk.Checkbutton(settings, text="在本机记住 API Key", variable=self.remember_var, command=self.remember_changed)
-        remember.grid(row=1, column=3, sticky="w", padx=(16, 0), pady=5)
-        ttk.Label(settings, text="详情模板", style="Muted.TLabel").grid(row=2, column=0, sticky="w", pady=5)
-        template = ttk.Combobox(settings, textvariable=self.template_var, values=list(self.TEMPLATES), state="readonly")
-        template.grid(row=2, column=1, columnspan=3, sticky="ew", pady=5)
-        flags = ttk.Frame(settings, style="CardBody.TFrame")
-        flags.grid(row=3, column=1, columnspan=3, sticky="w", pady=(4, 0))
-        resume = ttk.Checkbutton(flags, text="断点续跑（跳过已完成商品）", variable=self.resume_var)
-        resume.pack(side="left", padx=(0, 24))
-        browser = ttk.Checkbutton(flags, text="显示浏览器（便于手动验证）", variable=self.browser_var)
+        settings.grid_columnconfigure(1, weight=1)
+        settings.grid_columnconfigure(3, weight=1)
+        settings.grid_columnconfigure(0, minsize=84)
+        text(settings, "AI 服务", color=MUTED).grid(row=0, column=0, sticky="w", padx=(18, 0), pady=gap)
+        provider = combo(settings, values=list(self.PROVIDERS), variable=self.provider_var, command=lambda _v: self.change_provider())
+        provider.grid(row=0, column=1, sticky="ew", pady=gap)
+        text(settings, "模型", color=MUTED).grid(row=0, column=2, padx=(16, 8))
+        model = entry(settings, textvariable=self.model_var)
+        model.grid(row=0, column=3, sticky="ew", padx=(0, 18), pady=gap)
+        text(settings, "API Key", color=MUTED).grid(row=1, column=0, sticky="w", padx=(18, 0), pady=gap)
+        key = entry(settings, textvariable=self.key_var, show="●")
+        key.grid(row=1, column=1, columnspan=2, sticky="ew", pady=gap)
+        remember = check(settings, "在本机记住 API Key", self.remember_var, self.remember_changed)
+        remember.grid(row=1, column=3, sticky="w", padx=(16, 18), pady=gap)
+        text(settings, "详情模板", color=MUTED).grid(row=2, column=0, sticky="w", padx=(18, 0), pady=gap)
+        template = combo(settings, values=list(self.TEMPLATES), variable=self.template_var)
+        template.grid(row=2, column=1, columnspan=3, sticky="ew", padx=(0, 18), pady=gap)
+        flags = ctk.CTkFrame(settings, fg_color="transparent")
+        flags.grid(row=3, column=1, columnspan=3, sticky="w", pady=(2, 8 if compact else 14))
+        resume = check(flags, "断点续跑（跳过已完成商品）", self.resume_var)
+        resume.pack(side="left", padx=(0, 28))
+        browser = check(flags, "显示浏览器（便于手动验证）", self.browser_var)
         browser.pack(side="left")
         self.editable_widgets.extend([(provider, "readonly"), (model, "normal"), (key, "normal"), (remember, "normal"), (template, "readonly"), (resume, "normal"), (browser, "normal")])
 
-        # Preserve usable log space when the screen cannot fit the full-size spacing.
-        if compact:
-            for panel in (files, settings):
-                for widget in panel.winfo_children():
-                    widget.grid_configure(pady=2)
-
-        actions = ttk.Frame(root)
+        actions = ctk.CTkFrame(root, fg_color="transparent")
         actions.grid(row=6, column=0, sticky="ew", pady=(8 if compact else 16, 0))
-        ttk.Label(actions, text="平台登录", style="Sub.TLabel").pack(side="left", padx=(0, 10))
+        text(actions, "平台登录", color=MUTED).pack(side="left", padx=(0, 10))
         for label, site in [("阿里巴巴", "alibaba"), ("淘宝", "taobao"), ("天猫", "tmall")]:
-            button = ttk.Button(actions, text=label, command=lambda selected=site: self.start_login(selected))
-            button.pack(side="left", padx=(0, 8))
-            self.editable_widgets.append((button, "normal"))
-        self.start_button = ttk.Button(actions, text="开始生成", style="Accent.TButton", command=self.start_generation)
+            login = button(actions, label, lambda selected=site: self.start_login(selected))
+            login.pack(side="left", padx=(0, 8))
+            self.editable_widgets.append((login, "normal"))
+        self.start_button = button(actions, "开始生成", self.start_generation, primary=True)
         self.start_button.pack(side="right")
-        self.stop_button = ttk.Button(actions, text="停止并保存", command=self.stop_task, state="disabled")
+        self.stop_button = button(actions, "停止并保存", self.stop_task)
+        self.stop_button.configure(state="disabled")
         self.stop_button.pack(side="right", padx=10)
 
-        section(7, "运行状态", pady=(18, 6))
+        section(7, "运行状态", pady=(10 if compact else 18, 6))
         logs = card(8)
-        logs.columnconfigure(0, weight=1)
-        logs.rowconfigure(3, weight=1)
-        top = ttk.Frame(logs, style="CardBody.TFrame")
-        top.grid(row=0, column=0, sticky="ew")
-        top.columnconfigure(0, weight=1)
-        self.status_label = ttk.Label(top, textvariable=self.status_var, style="StatusIdle.TLabel", wraplength=560)
+        logs.grid_columnconfigure(0, weight=1)
+        logs.grid_rowconfigure(3, weight=1)
+        top = ctk.CTkFrame(logs, fg_color="transparent")
+        top.grid(row=0, column=0, sticky="ew", padx=18, pady=(8 if compact else 14, 0))
+        top.grid_columnconfigure(0, weight=1)
+        self.status_label = text(top, "", 13, True, MUTED, anchor="w", justify="left", wraplength=560)
         self.status_label.grid(row=0, column=0, sticky="w")
         top.bind("<Configure>", lambda e: self.status_label.configure(wraplength=max(200, e.width - 260)))
-        self.counts_label = ttk.Label(top, textvariable=self.counts_var, style="Muted.TLabel")
+        self.counts_label = text(top, "", color=MUTED)
         self.counts_label.grid(row=0, column=1, sticky="e")
-        self.progress = ttk.Progressbar(logs, maximum=1)
-        self.progress.grid(row=1, column=0, sticky="ew", pady=(10, 0))
-        self.continue_button = ttk.Button(logs, text="我已完成登录，继续", command=self.continue_login)
-        self.continue_button.grid(row=2, column=0, sticky="w", pady=(10, 0))
+        self.progress = ctk.CTkProgressBar(logs, height=8, corner_radius=4, fg_color="#E5E9F2", progress_color=ACCENT)
+        self._progress(0, 1)
+        self.progress.grid(row=1, column=0, sticky="ew", padx=18, pady=(10, 0))
+        self.continue_button = button(logs, "我已完成登录，继续", self.continue_login)
+        self.continue_button.configure(width=160)
+        self.continue_button.grid(row=2, column=0, sticky="w", padx=18, pady=(10, 0))
         self.continue_button.grid_remove()
-        self.log_text = ScrolledText(logs, height=7, wrap="word", state="disabled")
-        style_log(self.log_text)
-        add_log_tags(self.log_text)
-        self.log_text.grid(row=3, column=0, sticky="nsew", pady=(12, 0))
+        self.log_text = ctk.CTkTextbox(logs, height=110 if compact else 170, wrap="word", fg_color="#FAFBFD", text_color=TEXT,
+                                       border_width=1, border_color=BORDER, corner_radius=8,
+                                       font=ctk.CTkFont(family="Consolas", size=12), state="disabled")
+        for tag, color in (("err", "#DC2626"), ("ok", "#059669"), ("dim", MUTED)):
+            self.log_text.tag_config(tag, foreground=color)
+        self.log_text.grid(row=3, column=0, sticky="nsew", padx=18, pady=(8, 12 if compact else 18))
 
-        footer = ttk.Frame(root)
+        footer = ctk.CTkFrame(root, fg_color="transparent")
         footer.grid(row=9, column=0, sticky="ew", pady=(6 if compact else 14, 0))
-        ttk.Label(footer, text="停止后会等待当前商品处理完成并保存。", style="Sub.TLabel").pack(side="left")
-        ttk.Button(footer, text="打开输出文件", command=self.open_output).pack(side="right")
-        self._status("就绪 · 选择 Excel 文件后开始生成", "idle")
+        text(footer, "停止后会等待当前商品处理完成并保存。", color=MUTED).pack(side="left")
+        button(footer, "打开输出文件", self.open_output).pack(side="right")
+        self._refresh_input_status()
+        self._counts(0, 0, 0)
 
     def _status(self, text, tone="run"):
-        self.status_var.set(f"● {text}")
-        self.status_label.configure(style={"idle": "StatusIdle", "run": "StatusRun", "ok": "StatusOk", "err": "StatusErr"}[tone] + ".TLabel")
+        self.status_label.configure(text=f"● {text}", text_color={"idle": MUTED, "run": ACCENT, "ok": OK, "err": ERR}[tone])
+
+    def _refresh_input_status(self, *_args):
+        if self.task:
+            return
+        filename = self.input_var.get().strip()
+        if not filename:
+            self._status("请选择 Excel 文件", "idle")
+        elif not Path(filename).is_file():
+            self._status("输入文件不存在，请重新选择", "err")
+        else:
+            self._status(f"已选择 {Path(filename).name}，点击开始生成", "idle")
 
     def _counts(self, total, done, failed):
-        self.counts_var.set(f"待处理 {total}  ·  成功 {done}  ·  失败 {failed}")
+        self.counts_label.configure(text=f"待处理 {total}  ·  成功 {done}  ·  失败 {failed}")
+
+    def _progress(self, value, maximum):
+        fraction = min(1, max(0, value / max(maximum, 1)))
+        self.progress.set(fraction)
+        self.progress.configure(progress_color=ACCENT if fraction > 0 else self.progress.cget("fg_color"))
 
     def choose_input(self):
         selected = filedialog.askopenfilename(parent=self, title="选择商品链接 Excel", filetypes=[("Excel 工作簿", "*.xlsx")])
@@ -259,7 +324,7 @@ class DesktopApp(tk.Tk):
             return
         self.finished = None
         self.pending_prompt = None
-        self.progress.configure(value=0, maximum=1)
+        self._progress(0, 1)
         self._counts(0, 0, 0)
         self._status("正在启动…")
         self.append_log("任务已启动。")
@@ -269,7 +334,7 @@ class DesktopApp(tk.Tk):
     def _set_busy(self, busy):
         for widget, idle_state in self.editable_widgets:
             widget.configure(state="disabled" if busy else idle_state)
-        self.start_button.configure(state="disabled" if busy else "normal")
+        self.start_button.configure(state="disabled" if busy else "normal", fg_color=ACCENT_OFF if busy else ACCENT)
         self.stop_button.configure(state="normal" if busy else "disabled")
 
     def append_log(self, message):
@@ -322,11 +387,11 @@ class DesktopApp(tk.Tk):
             self.append_log(update.get("message", ""))
         elif kind in {"progress", "finished"}:
             total, done, failed = (max(0, int(update.get(key, 0))) for key in ("total", "done", "failed"))
-            self.progress.configure(maximum=max(total, 1), value=min(done + failed, total))
+            self._progress(min(done + failed, total), total)
             self._counts(total, done, failed)
             if kind == "finished":
                 self.finished = update
-            elif not self.closing and str(self.stop_button["state"]) != "disabled":
+            elif not self.closing and self.stop_button.cget("state") != "disabled":
                 self._status("正在处理商品…")
         elif kind == "prompt":
             prompt = str(update["message"])
@@ -422,7 +487,6 @@ def main():
             parser.error("--self-test requires --report")
         from desktop_worker import self_test
         return self_test(args.report)
-    enable_dpi_awareness()
     DesktopApp().mainloop()
     return 0
 

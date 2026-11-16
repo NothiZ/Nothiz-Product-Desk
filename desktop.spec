@@ -1,13 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
 import ssl
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 root = Path(SPECPATH)
 datas = [(str(root / "build-resources" / "browsers"), "browsers"),
          (str(root / "assets" / "logo.ico"), "assets"),
          (str(root / "assets" / "logo.png"), "assets"),
          (str(root / "tests" / "fixtures" / "alibaba_1601683518137.html"), "selftest")]
+datas += collect_data_files("customtkinter")
 # This Python runtime loads a CA sidecar before any HTTPS connection is created.
 ssl_sidecar = Path(ssl.__file__).with_name("codex-rejected-cas.pem")
 if ssl_sidecar.is_file():
@@ -21,7 +22,7 @@ for package in ("scrapling", "patchright", "playwright", "browserforge", "apify_
     hiddenimports += package_imports
 
 a = Analysis([str(root / "desktop_app.py")], pathex=[str(root)], binaries=binaries, datas=datas,
-             hiddenimports=hiddenimports + ["openpyxl", "desktop_worker", "login", "run"],
+             hiddenimports=hiddenimports + ["openpyxl", "desktop_worker", "login", "run", "PIL._tkinter_finder"],
              excludes=["IPython", "pytest", "matplotlib", "scipy", "PyQt5", "PySide6"],
              noarchive=False)
 # Scrapling launches Patchright; filter Playwright's unused driver after its hooks run.

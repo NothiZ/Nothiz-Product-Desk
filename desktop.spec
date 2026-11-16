@@ -6,6 +6,7 @@ from PyInstaller.utils.hooks import collect_all
 root = Path(SPECPATH)
 datas = [(str(root / "build-resources" / "browsers"), "browsers"),
          (str(root / "assets" / "logo.ico"), "assets"),
+         (str(root / "assets" / "logo.png"), "assets"),
          (str(root / "tests" / "fixtures" / "alibaba_1601683518137.html"), "selftest")]
 # This Python runtime loads a CA sidecar before any HTTPS connection is created.
 ssl_sidecar = Path(ssl.__file__).with_name("codex-rejected-cas.pem")

@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 import llm_client
-from ai_writer import TitleDedupe, generate_content
+from ai_writer import TitleDedupe, find_review_terms, generate_content
 from scraper import Scraper, validate_product_url
 
 # ═══════════════════════════ 配置 ═══════════════════════════
@@ -24,7 +24,8 @@ LLM_WORKERS = 3                  # 同时进行的 AI 请求数（Gemini 免费�
 ENABLE_DEBUG_COLS = False        # 是否写入抓取调试列
 # ═════════════════════════════════════════════════════════════
 
-RESULT_COLS = ["价格", "AI中文标题", "AI英文标题", "AI中文详情", "AI英文详情", "颜色", "尺寸", "其他规格"]
+AI_COLUMNS = {"AI中文标题": "title_cn", "AI英文标题": "title_en", "AI中文详情": "desc_cn", "AI英文详情": "desc_en"}
+RESULT_COLS = ["价格", *AI_COLUMNS, "颜色", "尺寸", "其他规格"]
 DEBUG_COLS = {"最终URL": "final_url", "页面标题(原始)": "page_title_raw", "页面标题(清洗)": "title",
               "抓取关键词": "url_keywords", "抓取文本(片段)": "description", "抓取文本(原始片段)": "description_raw"}
 
@@ -40,7 +41,7 @@ def _detect_url_column(df: pd.DataFrame) -> str:
 
 
 def _load() -> tuple[pd.DataFrame, str]:
-    df = pd.read_excel(INPUT_FILE).drop(columns=["图片"], errors="ignore")
+    df = pd.read_excel(INPUT_FILE).drop(columns=["图片", "需检查"], errors="ignore")
     url_col = _detect_url_column(df)
     cols = RESULT_COLS + (list(DEBUG_COLS) if ENABLE_DEBUG_COLS else [])
     for c in cols:
@@ -57,6 +58,15 @@ def _load() -> tuple[pd.DataFrame, str]:
             for c in (c for c in cols if c in prev.columns):
                 df.loc[hit, c] = keys[hit].map(prev[c]).astype("string").fillna("")
             print(f"续跑：复用上次已完成的 {int(hit.sum())} 行（想全部重跑：删除 {OUTPUT_FILE} 或把 RESUME 设为 False）")
+    # Invalid reused text must enter generation again instead of bypassing validation.
+    for idx in df.index[df["AI中文标题"].str.strip().ne("")]:
+        content = {key: df.at[idx, col] for col, key in AI_COLUMNS.items()}
+        terms = find_review_terms(content)
+        if terms or not all(value.strip() for value in content.values()):
+            reason = "包含" + "、".join(terms) if terms else "标题或详情不完整"
+            print(f"第 {idx} 行已有文案{reason}，将自动重新生成。")
+            for col in AI_COLUMNS:
+                df.at[idx, col] = ""
     return df, url_col
 
 
@@ -75,8 +85,7 @@ def _save(df: pd.DataFrame, final: bool = False) -> str | None:
 
 
 def _fill_row(df: pd.DataFrame, idx, product: dict, ai: dict) -> None:
-    row = {"价格": product["price"], "AI中文标题": ai["title_cn"], "AI英文标题": ai["title_en"],
-           "AI中文详情": ai["desc_cn"], "AI英文详情": ai["desc_en"],
+    row = {"价格": product["price"], **{col: ai[key] for col, key in AI_COLUMNS.items()},
            **{c: product["variants"].get(c, "") for c in ("颜色", "尺寸", "其他规格")}}
     if ENABLE_DEBUG_COLS:
         for col, key in DEBUG_COLS.items():

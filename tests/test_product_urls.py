@@ -13,6 +13,7 @@ SUPPORTED = (
 )
 UNSUPPORTED = (
     "https://detail.1688.com/offer/123.html", "https://example.com/product/123",
+    "https://m.tb.cn/h.example", "https://detail.tmall.hk/item.htm?id=123",
     "https://example.com/alibaba.com/product-detail/test_1.html",
     "https://alibaba.com.example.com/product-detail/test_1.html",
     "https://fakealibaba.com/product-detail/test_1.html",

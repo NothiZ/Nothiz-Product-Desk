@@ -24,9 +24,23 @@ _SENSITIVE_FIELDS = {
     "custom", "customization", "customisation", "model", "model number", "model no",
 }
 _COLOR_SIZE_KEYS = ("color", "colour", "颜色", "size", "sizing", "尺码", "尺寸", "规格")
+_REVIEW_PATTERNS = tuple(
+    (term, re.compile(rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])" if term.isascii()
+                      else re.escape(term), re.I))
+    for term in ("OEM", "ODM", "批发", "贴牌", "淘宝", "天猫", "Alibaba", "Taobao", "Tmall",
+                 "wholesale", "logo customization", "旗舰店", "LOGO")
+)
 
 
 # ── 文本清洗 ──────────────────────────────────────────────────────────────────
+
+
+def find_review_terms(content: dict) -> list[str]:
+    """检测最终文案中的复核词，只返回提示，不修改内容或调用 AI。"""
+    texts = [re.sub(r"\s+", " ", str(content.get(key) or ""))
+             for key in ("title_cn", "title_en", "desc_cn", "desc_en")]
+    # ASCII boundaries also detect OEM next to Chinese without matching LOGO123.
+    return [term for term, pattern in _REVIEW_PATTERNS if any(pattern.search(text) for text in texts)]
 
 def _tidy(s: str) -> str:
     s = re.sub(r"\s{2,}", " ", s).strip()
@@ -268,24 +282,41 @@ def generate_content(product: dict, template: str = "template1", dedupe: TitleDe
         cn_rules=cn_rules, en_rules=en_rules, raw_title=raw_title, clean_title=clean_title,
         style=", ".join(style), keywords=", ".join(str(x) for x in url_kw if str(x).strip()), details=details,
     )
-    sec = _extract_sections(call_llm(prompt, temperature=0.2),
-                            ("ChineseTitle", "ChineseDescription", "EnglishTitle", "EnglishDescription"))
+    request = prompt
+    for attempt in range(2):
+        raw = call_llm(request, temperature=0.2)
+        sec = _extract_sections(raw, ("ChineseTitle", "ChineseDescription", "EnglishTitle", "EnglishDescription"))
+        title_cn = _tidy(sec["ChineseTitle"])
+        title_en = _tidy(sec["EnglishTitle"])
+        if template == "template1":
+            desc_cn = _normalize_points(sec["ChineseDescription"], "zh", 10)
+            desc_en = _normalize_points(sec["EnglishDescription"], "en", 10)
+        else:
+            desc_cn = _split_template2(sec["ChineseDescription"], "详情", "规格", "zh")
+            desc_en = _split_template2(sec["EnglishDescription"], "Details", "Specifications", "en")
 
-    title_cn = _tidy(sec["ChineseTitle"])
-    title_en = _tidy(sec["EnglishTitle"])
-    if template == "template1":
-        desc_cn = _normalize_points(sec["ChineseDescription"], "zh", 10)
-        desc_en = _normalize_points(sec["EnglishDescription"], "en", 10)
-    else:
-        desc_cn = _split_template2(sec["ChineseDescription"], "详情", "规格", "zh")
-        desc_en = _split_template2(sec["EnglishDescription"], "Details", "Specifications", "en")
+        content = {"title_cn": title_cn, "title_en": title_en, "desc_cn": desc_cn, "desc_en": desc_en}
+        missing = [label for label, value in (("ChineseTitle", title_cn), ("EnglishTitle", title_en),
+                                             ("ChineseDescription", desc_cn), ("EnglishDescription", desc_en)) if not value]
+        terms = find_review_terms(content)
+        problems = []
+        if missing:
+            problems.append("缺少有效内容：" + ", ".join(missing))
+        if terms:
+            problems.append("包含需移除的词：" + "、".join(terms))
+        if not problems:
+            break
+        reason = "；".join(problems)
+        if attempt == 1:
+            raise ValueError("AI 自动修正一次后仍不合格：" + reason)
+        print("[llm] 自动修正文案：" + reason)
+        request = (prompt + "\n\n【上一次输出】\n" + raw
+                   + "\n\n【本次修正要求】\n" + reason
+                   + "。请结合原始商品事实重写全部四个字段，保留有依据的材质和功能，"
+                     "去掉上述平台、营销或定制服务表述，不要通过拆字或改变拼写规避检查。"
+                     "所有字段必须有有效内容，并严格遵守原模板格式。")
 
-    # Validate before deduplication so failed rows cannot consume valid titles.
-    missing = [name for name, value in (("ChineseTitle", title_cn), ("EnglishTitle", title_en),
-                                       ("ChineseDescription", desc_cn), ("EnglishDescription", desc_en)) if not value]
-    if missing:
-        raise ValueError("AI 输出缺少有效内容：" + ", ".join(missing))
-
+    # Only accepted text may reserve a deduplicated title.
     if dedupe:
         title_cn = dedupe.unique("cn", title_cn)
         title_en = dedupe.unique("en", title_en)

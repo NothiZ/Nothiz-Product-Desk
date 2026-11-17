@@ -14,6 +14,65 @@ PRODUCT = {"page_title_raw": "USB LED Canvas Hat PVC TPU", "description": "商�
 
 
 class AiWriterTests(unittest.TestCase):
+    def test_flagged_content_is_corrected_once_with_specific_feedback(self):
+        valid = "\n".join(f"{label}:\n{value}" for label, value in SECTIONS.items())
+        leaked = valid.replace(SECTIONS["ChineseTitle"], "淘宝 LOGO 牛仔帽")
+        with patch.object(ai_writer, "call_llm", side_effect=[leaked, valid]) as model:
+            result = ai_writer.generate_content(PRODUCT)
+        self.assertEqual(result["title_cn"], SECTIONS["ChineseTitle"])
+        self.assertEqual(model.call_count, 2)
+        correction = model.call_args_list[1].args[0]
+        self.assertIn("淘宝", correction)
+        self.assertIn("LOGO", correction)
+        self.assertIn(PRODUCT["page_title_raw"], correction)
+
+    def test_persistent_leak_fails_after_one_correction_without_reserving_titles(self):
+        valid = "\n".join(f"{label}:\n{value}" for label, value in SECTIONS.items())
+        leaked = valid.replace(SECTIONS["ChineseTitle"], "淘宝 LOGO 牛仔帽")
+        dedupe = ai_writer.TitleDedupe()
+        with patch.object(ai_writer, "call_llm", return_value=leaked) as model:
+            with self.assertRaisesRegex(ValueError, "淘宝"):
+                ai_writer.generate_content(PRODUCT, dedupe=dedupe)
+        self.assertEqual(model.call_count, 2)
+        result = self.generate(SECTIONS, dedupe=dedupe)
+        self.assertEqual(result["title_en"], SECTIONS["EnglishTitle"])
+
+    def test_valid_content_uses_one_model_call(self):
+        response = "\n".join(f"{label}:\n{value}" for label, value in SECTIONS.items())
+        with patch.object(ai_writer, "call_llm", return_value=response) as model:
+            ai_writer.generate_content(PRODUCT)
+        self.assertEqual(model.call_count, 1)
+
+    def test_incomplete_output_can_be_corrected_without_manual_rework(self):
+        response = "\n".join(f"{label}:\n{value}" for label, value in SECTIONS.items())
+        with patch.object(ai_writer, "call_llm", side_effect=["", response]) as model:
+            result = ai_writer.generate_content(PRODUCT)
+        self.assertEqual(result["title_cn"], SECTIONS["ChineseTitle"])
+        self.assertEqual(model.call_count, 2)
+
+    def test_review_detection_lists_precise_terms_without_modifying_content(self):
+        detect = getattr(ai_writer, "find_review_terms", None)
+        self.assertIsNotNone(detect, "Final-output review detection has not been implemented")
+        content = {
+            "title_cn": "淘宝 LOGO 牛仔帽",
+            "title_en": "Taobao Alibaba Tmall LOGO Denim Hat",
+            "desc_cn": "支持oEm定制，ODM、欢迎批发、贴牌、天猫旗舰店正品。",
+            "desc_en": "Supports logo\ncustomization and WHOLESALE orders.",
+        }
+        original = dict(content)
+        self.assertEqual(detect(content), ["OEM", "ODM", "批发", "贴牌", "淘宝", "天猫", "Alibaba", "Taobao", "Tmall", "wholesale", "logo customization", "旗舰店", "LOGO"])
+        self.assertEqual(content, original)
+
+    def test_review_detection_does_not_flag_normal_product_words(self):
+        detect = getattr(ai_writer, "find_review_terms", None)
+        self.assertIsNotNone(detect, "Final-output review detection has not been implemented")
+        content = {**SECTIONS, "title_en": "USB LED Off-shoulder Canvas Hat"}
+        # Detection consumes the same four keys as generate_content's public result.
+        result = {"title_cn": content["ChineseTitle"], "title_en": content["title_en"],
+                  "desc_cn": content["ChineseDescription"], "desc_en": content["EnglishDescription"]}
+        self.assertEqual(detect(result), [])
+        self.assertEqual(detect({"title_en": "LOGO123 wholesaler AlibabaCloud"}), [])
+
     def generate(self, sections, template="template1", dedupe=None):
         response = "\n".join(f"{label}:\n{value}" for label, value in sections.items())
         with patch.object(ai_writer, "call_llm", return_value=response):

@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import scraper
@@ -27,9 +28,10 @@ UNSUPPORTED = (
 class ProductUrlTests(unittest.TestCase):
     def test_supported_domains_preserve_platform_and_login_state_selection(self):
         for url, platform, state in SUPPORTED:
-            with self.subTest(url=url), patch.object(scraper.os.path, "exists", return_value=True):
+            with self.subTest(url=url), patch.object(scraper.os.path, "exists", return_value=True), \
+                 patch.object(scraper, "login_state_path", side_effect=lambda filename: Path("C:/local-login") / filename, create=True):
                 self.assertEqual(scraper._platform(url), platform)
-                self.assertEqual(scraper._state_file(url), state)
+                self.assertEqual(scraper._state_file(url), str(Path("C:/local-login") / state))
 
     def test_unsupported_and_malformed_urls_are_rejected(self):
         for url in UNSUPPORTED:

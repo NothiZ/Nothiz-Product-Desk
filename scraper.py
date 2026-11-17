@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlparse
 from bs4 import BeautifulSoup
 from patchright.async_api import TimeoutError as PWTimeout
 from scrapling.fetchers import AsyncStealthySession
+from desktop_runtime import login_state_path
 
 try:
     import lxml  # noqa: F401
@@ -26,10 +27,11 @@ BLOCK_ALIBABA_ASSETS = True      # 阿里页拦截字体/媒体以加快加载�
 TAOBAO_DELAY = (1.5, 3.5)        # 淘宝/天猫每条之间的随机间隔（秒），降低风控概率
 
 _COLOR_KEYS = ("颜色", "color", "colour")
-_SIZE_KEYS = ("尺寸", "尺码", "size", "长度", "length", "大小")
+_SIZE_KEYS = ("尺寸", "尺码", "鞋码", "size", "长度", "length", "大小")
 _MONEY = re.compile(r"(US\$|CNY¥|CN¥|[¥￥$€£])\s*(\d[\d,]*(?:\.\d+)?)", re.I)
 _SKU_REGIONS = '[data-module-name="module_sku"], [data-module-name="module_skuPanel"], [data-testid="pc-purchase-sku-options"]'
 _SKU_ROWS = '[data-testid="sku-list"], [data-testid="pc-purchase-sku-option-attribute"]'
+_TAO_SKU_REGIONS = '[class*="skuWrapper--"], #J_isku, #J_DetailMeta .tb-sku, .tb-skin .tb-sku'
 _ALI_DETAIL_SELECTORS = [
     'div[data-module-name="module_product_overview"]',
     'div[data-module-name="module_key_attributes"]',
@@ -191,6 +193,19 @@ def _snippet(text: str, anchors: list[str], max_len: int) -> str:
     return text[:max_len] if pos is None else text[max(0, pos - 200): max(0, pos - 200) + max_len]
 
 
+def _sku_properties(props) -> dict[str, list[str]]:
+    out = {}
+    for prop in props if isinstance(props, list) else []:
+        if not isinstance(prop, dict) or not isinstance(prop.get("values"), list):
+            continue
+        name = str(prop.get("name") or "").strip()
+        vals = [str(v.get("name") or v.get("value") or "").strip()
+                for v in prop["values"] if isinstance(v, dict)]
+        if name and any(vals):
+            out[name] = list(dict.fromkeys(v for v in vals if v))
+    return out
+
+
 def _sku_json(soup) -> dict[str, list[str]]:
     """Read only the current product's SKU data, excluding recommendations and customization."""
     decoder = json.JSONDecoder()
@@ -206,16 +221,7 @@ def _sku_json(soup) -> dict[str, list[str]]:
             continue
         if not isinstance(sku, dict):
             continue
-        out = {}
-        props = sku.get("skuAttrs") or sku.get("skuSummaryAttrs") or []
-        for prop in props if isinstance(props, list) else []:
-            if not isinstance(prop, dict) or not isinstance(prop.get("values"), list):
-                continue
-            name = str(prop.get("name") or "").strip()
-            vals = [str(v.get("name") or v.get("value") or "").strip()
-                    for v in prop.get("values", []) if isinstance(v, dict)]
-            if name and any(vals):
-                out[name] = list(dict.fromkeys(v for v in vals if v))
+        out = _sku_properties(sku.get("skuAttrs") or sku.get("skuSummaryAttrs") or [])
         if out:
             return out
     return {}
@@ -289,6 +295,51 @@ def _extract_alibaba(html: str) -> dict:
     }
 
 
+def _taobao_variants(soup) -> dict[str, list[str]]:
+    dims = {}
+    for panel in soup.select(_TAO_SKU_REGIONS):
+        for row in panel.select('[class*="skuItem--"]'):
+            label = row.select_one('[class*="ItemLabel--"]')
+            name = label.get_text(" ", strip=True) if label else ""
+            values = []
+            for option in row.select('[class*="valueItem--"]'):
+                text = option.select_one('[class*="valueItemText--"]')
+                image = option.select_one('img[alt]')
+                value = (text.get("title") or text.get_text(" ", strip=True)) if text else option.get("title") or (image.get("alt") if image else "")
+                if value:
+                    values.append(value.strip())
+            if name and values:
+                dims[name] = list(dict.fromkeys(values))
+        for row in panel.select('.J_TSaleProp'):
+            label = row.find_parent("dl")
+            label = label.find("dt") if label else None
+            name = row.get("data-property") or (label.get_text(" ", strip=True) if label else "")
+            values = []
+            for option in row.select('li[data-value]'):
+                title = option.select_one('[title]')
+                image = option.select_one('img[alt]')
+                value = (title.get("title") if title else "") or (image.get("alt") if image else "") or option.get_text(" ", strip=True)
+                if value:
+                    values.append(value.strip())
+            if name and values:
+                dims[name] = list(dict.fromkeys(values))
+
+    # Read only the current product's hydration data, never recommendation SKUs.
+    decoder = json.JSONDecoder()
+    for script in soup.find_all("script"):
+        text = script.string or ""
+        if "__ICE_APP_CONTEXT__" not in text:
+            continue
+        for match in re.finditer(r'(?:\bvar\s+\w+|window\.__ICE_APP_CONTEXT__)\s*=\s*', text):
+            try:
+                data, _ = decoder.raw_decode(text, match.end())
+                props = data["loaderData"]["home"]["data"]["res"]["skuBase"]["props"]
+            except (ValueError, KeyError, TypeError):
+                continue
+            dims.update(_sku_properties(props))
+    return dims
+
+
 def _extract_taobao(html: str) -> dict:
     soup = BeautifulSoup(html, _PARSER)
     price = ""
@@ -299,7 +350,7 @@ def _extract_taobao(html: str) -> dict:
             if price:
                 break
     props = "\n".join(n.get_text("\n", strip=True) for n in soup.select(".tm-propertylist, .tb-property"))
-    return {"price": price, "props": props}
+    return {"price": price, "props": props, "dims": _taobao_variants(soup)}
 
 
 async def _block_assets(route):
@@ -314,9 +365,11 @@ async def _block_assets(route):
 def _dump_sku(url: str, html: str) -> None:
     """Save enough page evidence to diagnose missing variants locally."""
     soup = BeautifulSoup(html, _PARSER)
-    mods = soup.select(_SKU_REGIONS)
+    mods = soup.select(_SKU_REGIONS + ", " + _TAO_SKU_REGIONS)
     m = re.search(r"_(\d+)\.html", url)
-    path = os.path.join("debug", f"sku_{m.group(1) if m else 'page'}.html")
+    item_id = m.group(1) if m else parse_qs(urlparse(url).query).get("id", ["page"])[0]
+    item_id = item_id if re.fullmatch(r"\d+", item_id) else "page"
+    path = os.path.join("debug", f"sku_{item_id}.html")
     os.makedirs("debug", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(map(str, mods)) if any(n.get_text(strip=True) for n in mods) else html)
@@ -347,7 +400,7 @@ def _platform(url: str) -> str:
 
 def _state_file(url: str) -> str | None:
     site = validate_product_url(url)
-    name = STATE_FILES[site]
+    name = str(login_state_path(STATE_FILES[site]))
     return name if os.path.exists(name) else None
 
 
@@ -508,6 +561,11 @@ class Scraper:
                         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")  # 触发懒加载模块
                 except PWTimeout:
                     pass
+        else:
+            try:
+                await page.wait_for_selector(_TAO_SKU_REGIONS, timeout=4000)
+            except PWTimeout:
+                pass
 
         html = await page.content()
         if ali:
@@ -516,11 +574,11 @@ class Scraper:
             detail = ""
         else:
             d = await asyncio.to_thread(_extract_taobao, html)
-            dims, detail = {}, await self._frames_text(page)
+            dims, detail = d["dims"], await self._frames_text(page)
 
         cells = _variant_cells(dims)
         print("变体:", cells or "未读到")
-        if ali and not dims:
+        if not dims:
             _dump_sku(url, html)
         title = clean_page_title(raw_title) or d.get("h1", "")
         print("清洗后标题:", title)

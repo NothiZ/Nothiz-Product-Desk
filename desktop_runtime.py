@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import uuid
@@ -30,6 +31,20 @@ def user_data_dir():
 
 def resource_dir():
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+
+
+def login_state_path(filename):
+    destination = user_data_dir() / filename
+    # Explicit worker/test directories must not import unrelated credentials.
+    if os.getenv("PRODUCT_DETAILS_DATA_DIR"):
+        return destination
+    legacy = resource_dir() / filename
+    if legacy.resolve() != destination.resolve() and legacy.is_file():
+        if not destination.exists():
+            shutil.move(str(legacy), str(destination))
+        elif legacy.read_bytes() == destination.read_bytes():
+            legacy.unlink()
+    return destination
 
 
 def configure_browser_path():
@@ -182,6 +197,9 @@ def launch_job(settings, *, kind="generate", api_key="", site="alibaba"):
         raise ValueError("未知登录站点")
     if kind == "generate":
         settings = validate_generation(settings, api_key)
+    # Migrate before the worker receives its explicit data-directory override.
+    for filename in ("alibaba_state.json", "taobao_state.json", "tmall_auth.json"):
+        login_state_path(filename)
     folder = user_data_dir() / "jobs" / uuid.uuid4().hex
     folder.mkdir(parents=True)
     task_file = folder / "task.json"

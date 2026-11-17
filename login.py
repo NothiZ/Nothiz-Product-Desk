@@ -1,27 +1,29 @@
 # -*- coding: utf-8 -*-
-"""用法：python login.py taobao|tmall|alibaba（不带参数则询问）。登录态保存到 scraper.STATE_FILES 里对应的文件。"""
+"""登录 Alibaba 或淘宝/天猫；所有登录态统一保存到窗口版用户数据目录。"""
 import sys
 from contextlib import suppress
 
 from scrapling.fetchers import StealthySession
 
 from scraper import BROWSER_OPTIONS, STATE_FILES
+from desktop_runtime import login_state_path
 
-_LOGIN_URLS = {  # 天猫登录页会自动跳转到淘宝统一账号登录
+_LOGIN_URLS = {
     "taobao": "https://login.taobao.com",
-    "tmall": "https://login.tmall.com",
     "alibaba": "https://login.alibaba.com",
 }
 
 
 def login(site: str, confirm=None) -> bool:
-    state = STATE_FILES[site]
+    site = "taobao" if site == "tmall" else site
+    sites = ("taobao", "tmall") if site == "taobao" else (site,)
+    label = "淘宝 / 天猫" if site == "taobao" else "阿里巴巴"
     completed = False
     prompt = confirm or input
 
     def finish_login(page):
         nonlocal completed
-        prompt("\n请在浏览器中完成登录（淘宝/天猫推荐手机淘宝扫码），登录成功、页面跳转后回到此处按回车…")
+        prompt(f"\n请在浏览器中完成{label}登录，登录成功、页面跳转后回到此处按回车…")
         with suppress(Exception):
             page.wait_for_load_state("networkidle", timeout=8000)
         page.wait_for_timeout(2000)
@@ -32,12 +34,26 @@ def login(site: str, confirm=None) -> bool:
             return
         completed = True
 
+    def finish_tmall(page):
+        nonlocal completed
+        with suppress(Exception):
+            page.wait_for_load_state("networkidle", timeout=8000)
+        page.wait_for_timeout(2000)
+        if "login" in page.url:
+            completed = False
+            finish_login(page)
+
     with StealthySession(headless=False, timeout=60000, **BROWSER_OPTIONS) as session:
-        print(f"正在打开 {site} 登录页…")
+        print(f"正在打开{label}登录页…")
         session.fetch(_LOGIN_URLS[site], page_action=finish_login)
+        if completed and site == "taobao":
+            # Reopening Tmall's login portal can prompt again despite shared Taobao auth.
+            session.fetch("https://www.tmall.com/", page_action=finish_tmall)
         if completed:
-            session.save_state(state)
-            print(f"\n✅ 登录状态已保存至 {state}")
+            for selected in sites:
+                state = str(login_state_path(STATE_FILES[selected]))
+                session.save_state(state)
+                print(f"\n✅ 登录状态已保存至 {state}")
     return completed
 
 

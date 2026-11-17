@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -6,6 +7,20 @@ import scraper
 
 
 class ScraperSessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tmall_scrape_returns_variants_through_the_existing_pipeline(self):
+        page = MagicMock()
+        page.url = "https://detail.tmall.com/item.htm?id=1057477467114"
+        page.title = AsyncMock(return_value="测试运动鞋-tmall.com天猫")
+        page.content = AsyncMock(return_value=(Path(__file__).parent / "fixtures/tmall_sku.html").read_text(encoding="utf-8"))
+        page.wait_for_selector = AsyncMock()
+        sc = scraper.Scraper(headless=True)
+        with patch.object(sc, "_pass_checkpoint", new=AsyncMock(return_value=True)), \
+             patch.object(sc, "_frames_text", new=AsyncMock(return_value="商品详情")):
+            result = await sc._scrape(page, page.url, "taobao")
+        self.assertEqual(result["variants"]["颜色"], "40730303")
+        self.assertEqual(len(result["variant_dimensions"]["鞋码"]), 19)
+        self.assertIn("47.5", result["variants"]["尺寸"])
+
     def make_session(self):
         session = MagicMock()
         session.__aenter__ = AsyncMock(return_value=session)

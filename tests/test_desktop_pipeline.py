@@ -239,7 +239,7 @@ class DesktopLoginTests(unittest.TestCase):
         session.__enter__.return_value=session
         session.fetch.side_effect=lambda url,**kw: kw["page_action"](page)
         confirm=MagicMock(return_value="")
-        with patch.object(login,"StealthySession",return_value=session):
+        with patch.object(login,"StealthySession",return_value=session), patch.object(login,"login_state_path",return_value=Path("alibaba_state.json"),create=True):
             self.assertIs(login.login("alibaba",confirm=confirm), True)
         confirm.assert_called_once()
         session.save_state.assert_called_once_with("alibaba_state.json")
@@ -250,7 +250,7 @@ class DesktopLoginTests(unittest.TestCase):
         session = MagicMock()
         session.__enter__.return_value = session
         session.fetch.side_effect = lambda url, **kw: kw["page_action"](page)
-        with patch.object(login, "StealthySession", return_value=session):
+        with patch.object(login, "StealthySession", return_value=session), patch.object(login,"login_state_path",return_value=Path("alibaba_state.json"),create=True):
             self.assertIs(login.login("alibaba", confirm=lambda _: "n"), False)
         session.save_state.assert_not_called()
 

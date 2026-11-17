@@ -194,8 +194,10 @@ class DesktopApp(ctk.CTk):
         actions = ctk.CTkFrame(root, fg_color="transparent")
         actions.grid(row=6, column=0, sticky="ew", pady=(8 if compact else 16, 0))
         text(actions, "平台登录", color=MUTED).pack(side="left", padx=(0, 10))
-        for label, site in [("阿里巴巴", "alibaba"), ("淘宝", "taobao"), ("天猫", "tmall")]:
+        for label, site in [("阿里巴巴", "alibaba"), ("淘宝 / 天猫", "taobao")]:
             login = button(actions, label, lambda selected=site: self.start_login(selected))
+            if site == "taobao":
+                login.configure(width=112)
             login.pack(side="left", padx=(0, 8))
             self.editable_widgets.append((login, "normal"))
         self.start_button = button(actions, "开始生成", self.start_generation, primary=True)

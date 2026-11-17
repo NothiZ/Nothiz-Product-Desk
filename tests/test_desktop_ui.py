@@ -8,6 +8,17 @@ from unittest.mock import Mock, patch
 
 
 class DesktopUiTests(unittest.TestCase):
+    def test_taobao_and_tmall_share_one_login_button(self):
+        buttons = [widget for widget, _ in self.app.editable_widgets if isinstance(widget, self.module.ctk.CTkButton)]
+        labels = [widget.cget("text") for widget in buttons]
+        self.assertIn("阿里巴巴", labels)
+        self.assertIn("淘宝 / 天猫", labels)
+        self.assertNotIn("淘宝", labels)
+        self.assertNotIn("天猫", labels)
+        next(widget for widget in buttons if widget.cget("text") == "淘宝 / 天猫").invoke()
+        self.assertEqual(self.launch.call_args.kwargs["kind"], "login")
+        self.assertEqual(self.launch.call_args.kwargs["site"], "taobao")
+
     def setUp(self):
         self.assertIsNotNone(importlib.util.find_spec("desktop_app"), "Desktop window has not been implemented")
         self.module = importlib.import_module("desktop_app")

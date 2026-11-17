@@ -14,28 +14,45 @@ PRODUCT = {"page_title_raw": "USB LED Canvas Hat PVC TPU", "description": "商�
 
 
 class AiWriterTests(unittest.TestCase):
-    def test_flagged_content_is_corrected_once_with_specific_feedback(self):
+    def test_flagged_content_is_returned_without_rewriting_or_failing(self):
         valid = "\n".join(f"{label}:\n{value}" for label, value in SECTIONS.items())
         leaked = valid.replace(SECTIONS["ChineseTitle"], "淘宝 LOGO 牛仔帽")
         with patch.object(ai_writer, "call_llm", side_effect=[leaked, valid]) as model:
             result = ai_writer.generate_content(PRODUCT)
-        self.assertEqual(result["title_cn"], SECTIONS["ChineseTitle"])
-        self.assertEqual(model.call_count, 2)
-        correction = model.call_args_list[1].args[0]
-        self.assertIn("淘宝", correction)
-        self.assertIn("LOGO", correction)
-        self.assertIn(PRODUCT["page_title_raw"], correction)
+        self.assertEqual(result["title_cn"], "淘宝 LOGO 牛仔帽")
+        self.assertEqual(model.call_count, 1)
 
-    def test_persistent_leak_fails_after_one_correction_without_reserving_titles(self):
+    def test_flagged_content_is_accepted_for_normal_title_deduplication(self):
         valid = "\n".join(f"{label}:\n{value}" for label, value in SECTIONS.items())
         leaked = valid.replace(SECTIONS["ChineseTitle"], "淘宝 LOGO 牛仔帽")
         dedupe = ai_writer.TitleDedupe()
         with patch.object(ai_writer, "call_llm", return_value=leaked) as model:
-            with self.assertRaisesRegex(ValueError, "淘宝"):
-                ai_writer.generate_content(PRODUCT, dedupe=dedupe)
+            first = ai_writer.generate_content(PRODUCT, dedupe=dedupe)
+            second = ai_writer.generate_content(PRODUCT, dedupe=dedupe)
         self.assertEqual(model.call_count, 2)
-        result = self.generate(SECTIONS, dedupe=dedupe)
-        self.assertEqual(result["title_en"], SECTIONS["EnglishTitle"])
+        self.assertEqual(second["title_cn"], first["title_cn"] + "2")
+
+    def test_review_terms_remain_visible_after_title_deduplication(self):
+        dedupe = ai_writer.TitleDedupe()
+        sections = {**SECTIONS, "ChineseTitle": "刺绣LOGO", "EnglishTitle": "Embroidered Cap"}
+        self.generate(sections, dedupe=dedupe)
+        second = self.generate(sections, dedupe=dedupe)
+        self.assertNotEqual(second["title_cn"], sections["ChineseTitle"])
+        self.assertIn("LOGO", ai_writer.find_review_terms(second))
+
+    def test_model_error_is_propagated_without_content_regeneration(self):
+        with patch.object(ai_writer, "call_llm", side_effect=RuntimeError("connection lost")) as model:
+            with self.assertRaisesRegex(RuntimeError, "connection lost"):
+                ai_writer.generate_content(PRODUCT)
+        self.assertEqual(model.call_count, 1)
+
+    def test_missing_fields_fail_once_and_keep_partial_content(self):
+        response = "\n".join(f"{label}:\n{value}" for label, value in {**SECTIONS, "EnglishDescription": ""}.items())
+        with patch.object(ai_writer, "call_llm", return_value=response) as model:
+            with self.assertRaisesRegex(ValueError, "EnglishDescription") as caught:
+                ai_writer.generate_content(PRODUCT)
+        self.assertEqual(caught.exception.content["title_cn"], SECTIONS["ChineseTitle"])
+        self.assertEqual(model.call_count, 1)
 
     def test_valid_content_uses_one_model_call(self):
         response = "\n".join(f"{label}:\n{value}" for label, value in SECTIONS.items())
@@ -43,12 +60,12 @@ class AiWriterTests(unittest.TestCase):
             ai_writer.generate_content(PRODUCT)
         self.assertEqual(model.call_count, 1)
 
-    def test_incomplete_output_can_be_corrected_without_manual_rework(self):
+    def test_empty_output_fails_without_content_regeneration(self):
         response = "\n".join(f"{label}:\n{value}" for label, value in SECTIONS.items())
         with patch.object(ai_writer, "call_llm", side_effect=["", response]) as model:
-            result = ai_writer.generate_content(PRODUCT)
-        self.assertEqual(result["title_cn"], SECTIONS["ChineseTitle"])
-        self.assertEqual(model.call_count, 2)
+            with self.assertRaisesRegex(ValueError, "AI"):
+                ai_writer.generate_content(PRODUCT)
+        self.assertEqual(model.call_count, 1)
 
     def test_review_detection_lists_precise_terms_without_modifying_content(self):
         detect = getattr(ai_writer, "find_review_terms", None)

@@ -32,6 +32,14 @@ _REVIEW_PATTERNS = tuple(
 )
 
 
+class ContentGenerationError(ValueError):
+    """Keep partial output when required AI content is missing."""
+
+    def __init__(self, message: str, content: dict):
+        super().__init__(message)
+        self.content = content
+
+
 # ── 文本清洗 ──────────────────────────────────────────────────────────────────
 
 
@@ -256,10 +264,12 @@ class TitleDedupe:
         if not title:
             return title
         cjk = kind == "cn"
+        # Keep ASCII word boundaries intact for review-term detection.
+        separator = "" if cjk and not title[-1].isascii() else " "
         with self._lock:
             seen = self._seen[kind]
             # Raw URL hints have not passed the model's content selection.
-            cands = [title] + [f"{title}{i}" if cjk else f"{title} {i}" for i in range(2, 1000)]
+            cands = [title] + [f"{title}{separator}{i}" for i in range(2, 1000)]
             pick = next(c for c in cands if c not in seen)
             seen.add(pick)
             return pick
@@ -282,39 +292,22 @@ def generate_content(product: dict, template: str = "template1", dedupe: TitleDe
         cn_rules=cn_rules, en_rules=en_rules, raw_title=raw_title, clean_title=clean_title,
         style=", ".join(style), keywords=", ".join(str(x) for x in url_kw if str(x).strip()), details=details,
     )
-    request = prompt
-    for attempt in range(2):
-        raw = call_llm(request, temperature=0.2)
-        sec = _extract_sections(raw, ("ChineseTitle", "ChineseDescription", "EnglishTitle", "EnglishDescription"))
-        title_cn = _tidy(sec["ChineseTitle"])
-        title_en = _tidy(sec["EnglishTitle"])
-        if template == "template1":
-            desc_cn = _normalize_points(sec["ChineseDescription"], "zh", 10)
-            desc_en = _normalize_points(sec["EnglishDescription"], "en", 10)
-        else:
-            desc_cn = _split_template2(sec["ChineseDescription"], "详情", "规格", "zh")
-            desc_en = _split_template2(sec["EnglishDescription"], "Details", "Specifications", "en")
+    sec = _extract_sections(call_llm(prompt, temperature=0.2),
+                            ("ChineseTitle", "ChineseDescription", "EnglishTitle", "EnglishDescription"))
+    title_cn = _tidy(sec["ChineseTitle"])
+    title_en = _tidy(sec["EnglishTitle"])
+    if template == "template1":
+        desc_cn = _normalize_points(sec["ChineseDescription"], "zh", 10)
+        desc_en = _normalize_points(sec["EnglishDescription"], "en", 10)
+    else:
+        desc_cn = _split_template2(sec["ChineseDescription"], "详情", "规格", "zh")
+        desc_en = _split_template2(sec["EnglishDescription"], "Details", "Specifications", "en")
 
-        content = {"title_cn": title_cn, "title_en": title_en, "desc_cn": desc_cn, "desc_en": desc_en}
-        missing = [label for label, value in (("ChineseTitle", title_cn), ("EnglishTitle", title_en),
-                                             ("ChineseDescription", desc_cn), ("EnglishDescription", desc_en)) if not value]
-        terms = find_review_terms(content)
-        problems = []
-        if missing:
-            problems.append("缺少有效内容：" + ", ".join(missing))
-        if terms:
-            problems.append("包含需移除的词：" + "、".join(terms))
-        if not problems:
-            break
-        reason = "；".join(problems)
-        if attempt == 1:
-            raise ValueError("AI 自动修正一次后仍不合格：" + reason)
-        print("[llm] 自动修正文案：" + reason)
-        request = (prompt + "\n\n【上一次输出】\n" + raw
-                   + "\n\n【本次修正要求】\n" + reason
-                   + "。请结合原始商品事实重写全部四个字段，保留有依据的材质和功能，"
-                     "去掉上述平台、营销或定制服务表述，不要通过拆字或改变拼写规避检查。"
-                     "所有字段必须有有效内容，并严格遵守原模板格式。")
+    content = {"title_cn": title_cn, "title_en": title_en, "desc_cn": desc_cn, "desc_en": desc_en}
+    missing = [label for label, value in (("ChineseTitle", title_cn), ("EnglishTitle", title_en),
+                                         ("ChineseDescription", desc_cn), ("EnglishDescription", desc_en)) if not value]
+    if missing:
+        raise ContentGenerationError("AI 输出缺少有效内容：" + ", ".join(missing), content)
 
     # Only accepted text may reserve a deduplicated title.
     if dedupe:

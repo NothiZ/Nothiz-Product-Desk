@@ -5,7 +5,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from scraper import Scraper
+from scraper import Scraper, validate_product_url
 
 
 async def main():
@@ -14,8 +14,10 @@ async def main():
     parser.add_argument("--headless", action="store_true", help="隐藏浏览器窗口")
     parser.add_argument("--output", default="debug/product_check.json", help="单条采集结果 JSON 路径")
     args = parser.parse_args()
-    if not args.url.startswith(("https://", "http://")):
-        parser.error("请输入 http(s) 商品链接")
+    try:
+        validate_product_url(args.url)
+    except ValueError as error:
+        parser.error(str(error))
     async with Scraper(headless=args.headless) as sc:
         product = await sc.scrape(args.url)
     if not product:

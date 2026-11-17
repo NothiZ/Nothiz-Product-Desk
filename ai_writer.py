@@ -18,15 +18,11 @@ _STOP_STYLE = {
     "pink", "yellow", "purple", "navy", "khaki", "camel",
     "s", "m", "l", "xl", "xxl", "xs", "2xl", "3xl", "small", "medium", "large", "free",
 }
-_SENSITIVE = ("产地", "原产地", "发货地", "制造地", "定制", "商标", "牌子", "品牌", "logo",
-              "origin", "place of origin", "custom", "made in",
-              "型号", "model number", "model no")
-_MARKET_ZH = ["包邮", "淘宝", "天猫", "官方", "旗舰店", "店铺", "正品", "特价", "折扣",
-              "OEM", "定制", "logo", "LOGO", "改标", "贴牌", "批发", "一手货源", "产地",
-              "原产地", "发货地", "制造地", "中国制造", "广东", "深圳", "浙江", "义乌"]
-_MARKET_EN = ["free shipping", "official", "flagship store", "shop", "store", "discount",
-              "sale", "off", "customization", "customized", "wholesale", "supplier",
-              "place of origin", "origin", "made in china", "china", "manufacturer"]
+_SENSITIVE_FIELDS = {
+    "产地", "原产地", "发货地", "制造地", "定制", "商标", "牌子", "品牌", "型号",
+    "origin", "place of origin", "made in", "brand", "brand name", "logo",
+    "custom", "customization", "customisation", "model", "model number", "model no",
+}
 _COLOR_SIZE_KEYS = ("color", "colour", "颜色", "size", "sizing", "尺码", "尺寸", "规格")
 
 
@@ -34,43 +30,8 @@ _COLOR_SIZE_KEYS = ("color", "colour", "颜色", "size", "sizing", "尺码", "�
 
 def _tidy(s: str) -> str:
     s = re.sub(r"\s{2,}", " ", s).strip()
-    return re.sub(r"^[\-\|:\uFF1A\u2014\u2013\s]+|[\-\|:\uFF1A\u2014\u2013\s]+$", "", s).strip()
-
-
-def _remove_market_terms(text: str) -> str:
-    s = str(text or "")
-    for t in _MARKET_ZH:
-        s = s.replace(t, "")
-    for t in _MARKET_EN:
-        s = re.sub(rf"(?i)\b{re.escape(t)}\b", "", s)
-    return _tidy(s)
-
-
-def _remove_brand(text: str, brand_terms: set[str]) -> str:
-    s = str(text or "")
-    for term in sorted(brand_terms, key=len, reverse=True):
-        if re.search(r"[\u4e00-\u9fff]", term):
-            s = s.replace(term, "")
-        else:
-            s = re.sub(rf"(?i)\b{re.escape(term)}\b", "", s)
-    return _tidy(s)
-
-
-def _detect_brand_terms(title: str) -> set[str]:
-    t = (title or "").strip()
-    terms: set[str] = {"淘宝", "天猫", "Alibaba", "Alibaba.com"}
-    for tok in re.findall(r"\b[A-Z0-9]{3,}\b", t):
-        terms.update({tok, tok.upper(), tok.lower()})
-    m = re.match(r"^\s*([A-Za-z]{3,})\b", t)
-    if m:
-        terms.update({m.group(1), m.group(1).upper(), m.group(1).lower()})
-    for pat in (r"([\u4e00-\u9fff]{2,6})\s*([A-Za-z]{3,})", r"([A-Za-z]{3,})\s*([\u4e00-\u9fff]{2,6})"):
-        for m in re.finditer(pat, t):  # 两个模式分开扫：允许“智能手表 Bluetooth”这类重叠匹配
-            terms.update(m.groups())
-    m = re.match(r"^\s*([\u4e00-\u9fff]{2,4})(?:\s*|[-_])?(?:时尚|品牌|官方|新款)", t)
-    if m:
-        terms.add(m.group(1))
-    return {x for x in terms if x.strip()}
+    s = re.sub(r"^(\*\*|__)(.*?)\1$", r"\2", s).strip()
+    return s if re.search(r"[^\W_]", s) else ""
 
 
 def _is_color_size_enum(line: str) -> bool:
@@ -86,8 +47,12 @@ def _is_color_size_enum(line: str) -> bool:
 
 
 def _is_sensitive_line(line: str) -> bool:
-    ln = (line or "").lower()
-    return any(w in ln for w in _SENSITIVE) or bool(re.match(r"\W*model\s*[:：]", ln))
+    # Only explicit attribute names are filtered; prose is selected by the prompt.
+    m = re.match(r"^\s*[-*#•\s]*([^:：]+?)\s*[:：]", line or "")
+    if not m:
+        return False
+    key = re.sub(r"\s+", " ", m.group(1).strip(" *#").rstrip(".")).casefold()
+    return key in _SENSITIVE_FIELDS
 
 
 def _cap_sentences(text: str, lang: str, n: int = 2) -> str:
@@ -110,10 +75,10 @@ def _cap_sentences(text: str, lang: str, n: int = 2) -> str:
     return s if not ends or n >= len(ends) + 1 else s[:ends[n - 1]].strip()
 
 
-def _style_keywords(url_keywords: list, brand_terms: set[str]) -> list[str]:
+def _style_keywords(url_keywords: list) -> list[str]:
     out = []
     for kw in url_keywords:
-        kw = _remove_market_terms(_remove_brand(str(kw).strip(), brand_terms))
+        kw = _tidy(str(kw))
         if kw and not _is_color_size_enum(kw) and kw.lower() not in _STOP_STYLE:
             out.append(kw)
     return list(dict.fromkeys(out))
@@ -124,11 +89,14 @@ def _extract_sections(text: str, labels: tuple[str, ...]) -> dict[str, str]:
     out = dict.fromkeys(labels, "")
     cur, buf = None, []
     for line in text.splitlines():
-        m = re.match(r"^\s*([A-Za-z]+)\s*:\s*(.*)\s*$", line)
+        m = re.match(r"^\s*[*#\s]*([A-Za-z]+)[*\s]*[:：]\s*(.*?)\s*$", line)
         if m and m.group(1) in labels:
             if cur:
                 out[cur] = "\n".join(buf).strip()
-            cur, buf = m.group(1), ([m.group(2).strip()] if m.group(2).strip() else [])
+            value = m.group(2).strip()
+            if line.lstrip(" #").startswith("**") and value.startswith("**"):
+                value = value[2:].strip()
+            cur, buf = m.group(1), ([value] if value else [])
         elif cur is not None:
             buf.append(line.rstrip())
     if cur:
@@ -136,13 +104,11 @@ def _extract_sections(text: str, labels: tuple[str, ...]) -> dict[str, str]:
     return out
 
 
-def _normalize_points(text: str, lang: str, brand_terms: set[str], max_points: int = 10) -> str:
-    """把“类目：内容”列表规范化：中英类目名对齐、去敏感/品牌/营销词、每条最多 2 句、同类目最多 2 条。
-    不再补全：模型给不出的条目就少写，不往规格里塞通用套话。"""
+def _normalize_points(text: str, lang: str, max_points: int = 10) -> str:
+    """规范化参数列表，过滤明确属性字段，不按关键词修改正文或补造参数。"""
     zh = lang == "zh"
-    key_re = r"^(.{1,14}?)\s*[:\uFF1A]\s*(.*)$" if zh else r"^([A-Za-z][A-Za-z ]{0,32})\s*:\s*(.*)$"
+    key_re = r"^([^:：]{1,32}?)\s*[:：]\s*(.*)$"
     label_map = _EN2ZH if zh else _ZH2EN
-    reject = re.compile(r"[A-Za-z]" if zh else r"[\u4e00-\u9fff]")
     counts: dict[str, int] = {}
     lines = []
     for raw in (text or "").splitlines():
@@ -156,13 +122,13 @@ def _normalize_points(text: str, lang: str, brand_terms: set[str], max_points: i
         k = re.sub(r"^[\-\*\u2022\s]+", "", k)
         k = re.sub(r"[\-–—\|/]+$", "", k).strip()
         k = label_map.get(k[:14] if zh else k[:32], k[:14] if zh else k[:32])
-        v = _remove_market_terms(_remove_brand(m.group(2).strip(), brand_terms))
-        if not k or reject.search(k) or _is_color_size_enum(v):
+        v = _tidy(m.group(2))
+        if not k or not v or _is_color_size_enum(v):
             continue
         counts[k] = counts.get(k, 0) + 1
         if counts[k] > 2:
             continue
-        v = _cap_sentences(v, lang)[:120 if zh else 160].rstrip() or ("未提供" if zh else "Not specified")
+        v = _cap_sentences(v, lang)[:120 if zh else 160].rstrip()
         lines.append(f"{k}：{v}" if zh else f"{k}: {v}")
         if len(lines) >= max_points:
             break
@@ -172,6 +138,12 @@ def _normalize_points(text: str, lang: str, brand_terms: set[str], max_points: i
 # ── Prompt（全部静态，import 时拼好）────────────────────────────────────────────
 
 _PROMPT = """根据以下产品信息，一次性生成中文标题、中文详情、英文标题、英文详情，共四个字段。
+
+【内容筛选规则】
+- 仅使用输入中有依据的产品事实，不编造缺失的材质、功能或参数，不用通用套话补齐条目。
+- 由你根据上下文去除品牌名、平台名、促销话术、产地、产品型号，以及批发、代工、OEM/ODM、贴牌和LOGO定制服务内容；这些规则同时适用于标题和详情。
+- 不要把大写词或标题首词自动认作品牌。USB、LED、LCD、PVC、TPU、ABS、GPS、RGB、HD、UV、PU、EVA 等技术或材质词应按产品事实保留。
+- 保留有意义的设计、版型、材质和兼容性描述。Original design、Customer favorite、Custom fit、Off-shoulder、bone china 等表达不等于产地、定制服务或促销信息，须结合上下文判断，不能按词的一部分删除。
 
 【中文标题规则】
 - 取材于 Page Title，提炼核心产品词，简短适合独立站展示。
@@ -196,6 +168,7 @@ URL Keywords: {keywords}
 Extracted details: {details}
 
 【严格按此格式输出，不加任何解释或多余字段】
+四个字段都必须有有效内容，不能只输出标签或分段标记。标签使用英文冒号，不加 Markdown 加粗或代码块。
 ChineseTitle:
 ChineseDescription:
 EnglishTitle:
@@ -233,7 +206,7 @@ _RULES = {
 }
 
 
-def _split_template2(text: str, tag_intro: str, tag_spec: str, lang: str, brand_terms: set[str]) -> str:
+def _split_template2(text: str, tag_intro: str, tag_spec: str, lang: str) -> str:
     """拆成「详情段落」+「规格列表」。只有整行等于标记词才算标记行，
     避免正文里出现“规格”“Details”等字样时被误判成分段标记。"""
     def is_tag(ln: str, tag: str) -> bool:
@@ -248,11 +221,12 @@ def _split_template2(text: str, tag_intro: str, tag_spec: str, lang: str, brand_
         elif in_spec:
             spec.append(ln)
         else:
-            zh = lang == "zh"
-            keep = [s for s in re.split(r"(?<=[。！？；])" if zh else r"(?<=[.!?;])\s+", ln) if s and not _is_sensitive_line(s)]
-            if keep:  # 只删含敏感词的句子；整段一行时不会因为一个词丢掉全部介绍
-                intro.append(_remove_market_terms(_remove_brand(("" if zh else " ").join(keep), brand_terms)))
-    return f"{tag_intro}\n" + "\n".join(intro) + f"\n\n{tag_spec}\n" + _normalize_points("\n".join(spec), lang, brand_terms, 8)
+            if not _is_sensitive_line(ln):
+                intro.append(_tidy(ln))
+    points = _normalize_points("\n".join(spec), lang, 8)
+    if not any(intro) and not points:
+        return ""
+    return f"{tag_intro}\n" + "\n".join(intro) + f"\n\n{tag_spec}\n" + points
 
 
 # ── 标题去重（线程安全）──────────────────────────────────────────────────────
@@ -264,15 +238,14 @@ class TitleDedupe:
         self._lock = threading.Lock()
         self._seen = {"cn": {t for t in cn if t}, "en": {t for t in en if t}}
 
-    def unique(self, kind: str, title: str, pool: list[str]) -> str:
+    def unique(self, kind: str, title: str) -> str:
         if not title:
             return title
         cjk = kind == "cn"
-        words = [w for w in pool if bool(re.search(r"[\u4e00-\u9fff]", w)) == cjk]  # 中文标题只用中文词，英文标题只用英文词
         with self._lock:
             seen = self._seen[kind]
-            cands = [title] + [f"{title}{w}" if cjk else f"{title} {w}" for w in words]
-            cands += [f"{title}{i}" if cjk else f"{title} {i}" for i in range(2, 1000)]
+            # Raw URL hints have not passed the model's content selection.
+            cands = [title] + [f"{title}{i}" if cjk else f"{title} {i}" for i in range(2, 1000)]
             pick = next(c for c in cands if c not in seen)
             seen.add(pick)
             return pick
@@ -285,9 +258,8 @@ def generate_content(product: dict, template: str = "template1", dedupe: TitleDe
     template = template if template in _RULES else "template1"
     raw_title = str(product.get("page_title_raw") or "").strip()
     clean_title = str(product.get("title") or "").strip()
-    brand = _detect_brand_terms(raw_title or clean_title)
     url_kw = product.get("url_keywords") or []
-    style = _style_keywords(url_kw, brand)
+    style = _style_keywords(url_kw)
     details = "\n".join(ln for ln in str(product.get("description") or "").strip().splitlines()
                         if not _is_color_size_enum(ln))
 
@@ -299,16 +271,22 @@ def generate_content(product: dict, template: str = "template1", dedupe: TitleDe
     sec = _extract_sections(call_llm(prompt, temperature=0.2),
                             ("ChineseTitle", "ChineseDescription", "EnglishTitle", "EnglishDescription"))
 
-    title_cn = _remove_market_terms(_remove_brand(sec["ChineseTitle"], brand))
-    title_en = _remove_brand(_remove_market_terms(sec["EnglishTitle"]), brand)
+    title_cn = _tidy(sec["ChineseTitle"])
+    title_en = _tidy(sec["EnglishTitle"])
     if template == "template1":
-        desc_cn = _normalize_points(sec["ChineseDescription"], "zh", brand, 10)
-        desc_en = _normalize_points(sec["EnglishDescription"], "en", brand, 10)
+        desc_cn = _normalize_points(sec["ChineseDescription"], "zh", 10)
+        desc_en = _normalize_points(sec["EnglishDescription"], "en", 10)
     else:
-        desc_cn = _split_template2(sec["ChineseDescription"], "详情", "规格", "zh", brand)
-        desc_en = _split_template2(sec["EnglishDescription"], "Details", "Specifications", "en", brand)
+        desc_cn = _split_template2(sec["ChineseDescription"], "详情", "规格", "zh")
+        desc_en = _split_template2(sec["EnglishDescription"], "Details", "Specifications", "en")
+
+    # Validate before deduplication so failed rows cannot consume valid titles.
+    missing = [name for name, value in (("ChineseTitle", title_cn), ("EnglishTitle", title_en),
+                                       ("ChineseDescription", desc_cn), ("EnglishDescription", desc_en)) if not value]
+    if missing:
+        raise ValueError("AI 输出缺少有效内容：" + ", ".join(missing))
 
     if dedupe:
-        title_cn = dedupe.unique("cn", title_cn, style)
-        title_en = dedupe.unique("en", title_en, style)
+        title_cn = dedupe.unique("cn", title_cn)
+        title_en = dedupe.unique("en", title_en)
     return {"title_cn": title_cn, "title_en": title_en, "desc_cn": desc_cn, "desc_en": desc_en}

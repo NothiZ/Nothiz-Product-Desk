@@ -14,7 +14,7 @@ _LOGIN_URLS = {  # 天猫登录页会自动跳转到淘宝统一账号登录
 }
 
 
-def login(site: str, confirm=None) -> None:
+def login(site: str, confirm=None) -> bool:
     state = STATE_FILES[site]
     completed = False
     prompt = confirm or input

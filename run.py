@@ -9,7 +9,7 @@ import pandas as pd
 
 import llm_client
 from ai_writer import TitleDedupe, generate_content
-from scraper import Scraper
+from scraper import Scraper, validate_product_url
 
 # ═══════════════════════════ 配置 ═══════════════════════════
 PROVIDER = "deepseek"            # "deepseek" | "gemini"
@@ -94,7 +94,7 @@ async def main(progress=None, stop_event=None) -> dict:
         sys.exit(f"❌ AI 接口不可用：{e}")
     df, url_col = _load()
     todo = [(i, str(u).strip()) for i, u in df[url_col].items()
-            if str(u).strip().lower().startswith("http") and not df.at[i, "AI中文标题"].strip()]
+            if pd.notna(u) and str(u).strip() and not df.at[i, "AI中文标题"].strip()]
     print(f"共 {len(df)} 行，待处理 {len(todo)} 条。")
     dedupe = TitleDedupe(df["AI中文标题"], df["AI英文标题"])
     llm_sem, done, failed = asyncio.Semaphore(LLM_WORKERS), 0, 0
@@ -114,6 +114,7 @@ async def main(progress=None, stop_event=None) -> dict:
             return
         print(f"\n===== 第 {idx} 行 =====\n链接: {url}")
         try:
+            validate_product_url(url)
             product = await sc.scrape(url)
             if not product:
                 if not stopped():

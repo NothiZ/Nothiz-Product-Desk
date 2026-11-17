@@ -4,6 +4,12 @@
 
 采集层使用 **Scrapling**，窗口使用 **CustomTkinter**，支持 **DeepSeek** 和 **Gemini**。
 
+## 界面预览
+
+> 界面截图待补充。
+
+<!-- 在这里添加脱敏后的真实界面截图。 -->
+
 ## 功能与支持范围
 
 - 从 Excel 读取商品链接，批量采集价格、属性与详情。
@@ -18,7 +24,9 @@
 | 淘宝               | 支持价格、属性及详情 | 暂不支持                     |
 | 天猫               | 支持价格、属性及详情 | 暂不支持                     |
 
-商品页面、账号权限和验证流程可能影响采集结果。Alibaba.com 的支持范围不包含 1688。
+仅接受 `alibaba.com`、`taobao.com`、`tmall.com` 及其子域名下的完整 HTTP / HTTPS 商品链接。1688 和其他域名会被拒绝，批量任务会将对应商品计入失败，不进入浏览器采集或文案生成流程。淘宝与天猫仍然支持，不属于拒绝范围。
+
+商品页面、账号权限和验证流程可能影响采集结果。采集时请遵守平台服务条款和访问限制，仅处理你有权访问和使用的商品页面及数据。
 
 ## 下载与使用
 
@@ -34,6 +42,10 @@ Windows 10 / 11，64 位。前往 [GitHub Releases](https://github.com/NothiZ/Pr
 发布包包含 Python 运行时、依赖库及 Chromium，无需另外安装 Python 或浏览器。采集商品和调用 AI 接口需要联网，API 调用费用由所选服务商按账号计费。
 
 详细操作见 [桌面版使用说明](DESKTOP_USAGE.txt)。
+
+### Windows 安全提示
+
+当前发布的 exe 未进行代码签名，下载或首次启动时可能出现 SmartScreen 信誉提示。请从本仓库 Releases 下载，核对发布版本及提供的文件摘要；出现明确的恶意软件检测时应停止运行并反馈，不要关闭安全防护。相关机制见 [Microsoft SmartScreen 说明](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation)。
 
 ## Excel 格式与任务保存
 
@@ -70,6 +82,10 @@ $env:PLAYWRIGHT_SKIP_BROWSER_GC = "1"
 
 桌面窗口中直接填写 API Key 即可。（如需修改代码，关闭窗口并重新运行最后一条命令可查看效果，无需打包。）
 
+`PLAYWRIGHT_SKIP_BROWSER_GC=1` 仅用于浏览器安装阶段，跳过缓存浏览器的自动清理，避免影响同一台电脑上的其他项目；它不是采集功能开关。可省略这行，但建议在多项目共用浏览器缓存时保留。
+
+源码仓库不包含生成后的 `输入模板.xlsx`。自行创建 `.xlsx` 文件，在第一行填写 `链接`、后续每行填写一个商品详情链接即可，无需先运行打包脚本。
+
 ### 命令行批量生成
 
 将 `.env.example` 复制为 `.env`，填写所选服务的 API Key：
@@ -89,6 +105,16 @@ Copy-Item .env.example .env
 ```
 
 `DESC_TEMPLATE` 可选 `template1`（Key: Value 列表）或 `template2`（Details + Specifications）。`RESUME = True` 启用断点续跑。
+
+命令行还可在 `.env` 或系统环境变量中配置：
+
+| 变量 | 作用 | 程序默认值 |
+| --- | --- | --- |
+| `DEEPSEEK_MODEL` | DeepSeek 模型名称 | `deepseek-chat` |
+| `GEMINI_MODEL` | Gemini 模型名称 | `gemini-2.5-flash` |
+| `LLM_RPM` | AI 请求的每分钟限速，`0` 表示不主动限速 | DeepSeek 为 `0`，Gemini 为 `10` |
+
+Gemini 的 `10` 次/分钟是本程序的默认限速，不代表服务商向你的账号提供的额度；批量任务会因限速等待。请按账号实际限制调整，不要仅靠提高并发绕过额度。系统中已存在的同名环境变量优先于 `.env`；桌面版的模型以窗口设置为准，`LLM_RPM` 仍可通过环境变量设置。
 
 ### 单条商品采集检查
 
@@ -139,6 +165,23 @@ dist/slim-ui/
 | `desktop.spec` / `build_desktop.ps1` | 打包配置与构建脚本                 |
 | `tests/`                             | 回归测试与本地商品样本             |
 
+开发过程文档和历史源码校验快照已集中在 [docs/dev](docs/dev/README.md)，不参与程序运行。
+
+## 与 1.x 的简要对比
+
+1.x 以命令行脚本为主要使用方式；2.0 使用 Scrapling 采集层和可复用的异步浏览器会话，提供桌面窗口及 Windows 分发包。当前版本可在窗口选择两种详情模板、查看进度日志，并执行登录、断点续跑与停止保存。
+
+## 变更记录
+
+### 未发布
+
+- 内容筛选主要交给 prompt，本地保留格式整理、明确属性字段过滤及有效内容校验，减少正常词语误删。
+- 修复加粗标签、中文冒号和空内容处理，重复标题使用序号去重。
+- 按真实域名校验商品链接，拒绝 1688、未支持域名和伪装平台链接。
+- 补充文案、链接及批量失败处理测试，整理开发文档。
+
+已发布程序及对应说明见 [Releases](https://github.com/NothiZ/Product-Details-Generation-2.0/releases)。未发布的源码修改需重新打包后才会包含在 exe 中。
+
 ## 测试
 
 ```powershell
@@ -154,3 +197,7 @@ dist/slim-ui/
 勾选“在本机记住 API Key”后，密钥会以明文保存在本地 `settings.json` 中。不要分享包含密钥或登录状态的数据目录。命令行使用的 `.env`、商品表、登录态和构建产物均已加入 `.gitignore`。
 
 生成文案时，采集到的商品信息会发送到你选择的 AI 服务。发布包不包含开发者的 API Key、账号登录态或真实商品表。
+
+## 许可证
+
+本仓库的项目代码按 **GNU General Public License v3.0**（`GPL-3.0-only`）发布，完整条款见 [LICENSE](LICENSE)。第三方依赖及随程序分发的组件保留各自的许可证，项目许可证不替代这些组件的授权条款。

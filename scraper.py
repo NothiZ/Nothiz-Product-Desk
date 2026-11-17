@@ -323,12 +323,30 @@ def _dump_sku(url: str, html: str) -> None:
     print(f"⚠ 没读到变体，已保存 {path}")
 
 
+def validate_product_url(url: str) -> str:
+    """Validate the actual host and return its supported login site."""
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        invalid = (parsed.scheme not in ("http", "https") or not host
+                   or parsed.username is not None or parsed.password is not None or parsed.port == 0)
+    except ValueError:
+        raise ValueError("商品链接格式无效，请使用完整的 http(s) 商品链接。") from None
+    if invalid:
+        raise ValueError("商品链接格式无效，请使用不含账号密码的完整 http(s) 链接。")
+    # Match domain boundaries; platform names in a path or query prove nothing.
+    for site, domain in (("alibaba", "alibaba.com"), ("taobao", "taobao.com"), ("tmall", "tmall.com")):
+        if host == domain or host.endswith("." + domain):
+            return site
+    raise ValueError(f"不支持的商品域名：{host}；仅支持 Alibaba.com、淘宝和天猫，不支持 1688。")
+
+
 def _platform(url: str) -> str:
-    return "alibaba" if "alibaba.com/product-detail" in url else "taobao"
+    return "alibaba" if validate_product_url(url) == "alibaba" else "taobao"
 
 
 def _state_file(url: str) -> str | None:
-    site = "alibaba" if "alibaba.com" in url else "tmall" if "tmall.com" in url else "taobao"
+    site = validate_product_url(url)
     name = STATE_FILES[site]
     return name if os.path.exists(name) else None
 

@@ -139,7 +139,21 @@ async def _check_browser(html):
     try:
         url = f"http://127.0.0.1:{server.server_port}/alibaba.com/product-detail/selftest_1601683518137.html"
         async with Scraper(headless=True, concurrency={"alibaba": 2}) as sc:
-            products = await asyncio.gather(sc.scrape(url + "?n=1"), sc.scrape(url + "?n=2"))
+            # Local fixtures exercise the browser and extractor without changing public URL validation.
+            session = await sc._session("alibaba", None)
+
+            async def check_page(index):
+                result = None
+                page_url = url + f"?n={index}"
+
+                async def extract(page):
+                    nonlocal result
+                    result = await sc._scrape(page, page_url, "alibaba")
+
+                await session.fetch(page_url, page_action=extract)
+                return result
+
+            products = await asyncio.gather(check_page(1), check_page(2))
         expected = {"颜色": ["其它", "粉色"]}
         if not all(p and p["variant_dimensions"] == expected for p in products):
             raise AssertionError("离线浏览器采集的变体与样本不一致")

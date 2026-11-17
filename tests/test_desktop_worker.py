@@ -1,9 +1,10 @@
+import asyncio
 import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 try:
     import desktop_worker as worker
@@ -47,6 +48,25 @@ class DesktopWorkerTests(unittest.TestCase):
         self.assertEqual(self.result()["status"],"finished")
         log=(self.task.parent/"events.jsonl").read_text(encoding="utf-8")
         self.assertIn('"type": "prompt"',log)
+
+    def test_browser_selftest_handles_local_fixtures_without_relaxing_product_validation(self):
+        import scraper
+        session = MagicMock()
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=False)
+        expected = {"颜色": ["其它", "粉色"]}
+
+        async def fetch(url, **kwargs):
+            await kwargs["page_action"](MagicMock())
+
+        session.fetch = AsyncMock(side_effect=fetch)
+        with patch.object(scraper, "AsyncStealthySession", return_value=session), \
+             patch.object(scraper.Scraper, "_scrape", new=AsyncMock(return_value={"variant_dimensions": expected})):
+            report = asyncio.run(worker._check_browser("<html></html>"))
+        self.assertEqual(report, {"concurrent_pages": 2, "variants": expected})
+        self.assertEqual(session.fetch.await_count, 2)
+        with self.assertRaises(ValueError):
+            scraper.validate_product_url("http://127.0.0.1/item.htm?id=1")
 
 
 if __name__ == "__main__":

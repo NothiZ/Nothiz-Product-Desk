@@ -1,38 +1,48 @@
-# 产品详情生成 · Product Details Generation
+<div align="center">
 
-批量采集商品信息，使用 AI 生成中英文标题与详情，并导出为 Excel。提供 Windows 桌面窗口和 Python 命令行入口。
+<img src="assets/logo.png" alt="产品详情生成 Logo" width="96" />
 
-采集层使用 **Scrapling**，窗口使用 **CustomTkinter**，支持 **DeepSeek** 和 **Gemini**。
+# 产品详情生成
+
+**Product Details Generation**
+
+从商品链接到中英文标题与详情，一份 Excel 批量完成。
+
+[![Release](https://img.shields.io/github/v/release/NothiZ/Product-Details-Generation-2.0?style=flat-square&color=2563eb)](https://github.com/NothiZ/Product-Details-Generation-2.0/releases/latest)
+![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2563eb?style=flat-square)
+![Python](https://img.shields.io/badge/Python-3.12-3776ab?style=flat-square)
+[![License](https://img.shields.io/badge/License-GPL--3.0-64748b?style=flat-square)](LICENSE)
+
+**[下载 Windows 版](https://github.com/NothiZ/Product-Details-Generation-2.0/releases/latest)** · [快速开始](#快速开始) · [支持平台](#支持平台) · [源码运行](#源码运行) · [常见问题](#常见问题)
+
+无需安装 Python · 自带 Chromium · 支持 DeepSeek / Gemini
+
+</div>
+
+---
 
 ## 界面预览
 
 ![产品详情生成桌面窗口](assets/desktop-ui.png)
 
-## 功能与支持范围
+<p align="center"><sub>选择商品表格，配置 AI 服务，在窗口中查看进度与日志</sub></p>
 
-- 从 Excel 读取商品链接，批量采集价格、属性与详情。
-- 生成中文标题、英文标题、中文详情和英文详情，提供两种详情模板。
-- 采集与 AI 生成异步并行，浏览器会话按平台复用。
-- 支持平台登录、可见浏览器、进度日志、断点续跑及停止后保存。
+## 能做什么
 
 
-| 平台               | 商品信息采集         | 可选变体采集                 |
-| ------------------ | -------------------- | ---------------------------- |
-| Alibaba.com 国际站 | 支持                 | 支持颜色、尺寸及其他规格维度 |
-| 淘宝               | 支持价格、属性及详情 | 支持颜色分类、尺码及其他规格 |
-| 天猫               | 支持价格、属性及详情 | 支持颜色分类、鞋码及其他规格 |
+| 批量采集                 | 双语生成                 | 窗口操作             |
+| :----------------------- | :----------------------- | :------------------- |
+| 从 Excel 导入商品链接    | 生成中英文标题与详情     | 平台登录、进度与日志 |
+| 提取价格、属性与商品信息 | 两种详情模板可选         | 停止后保存、断点续跑 |
+| 采集颜色、尺寸及其他变体 | 标记指定词，方便人工检查 | 自动生成输出 Excel   |
 
-仅接受 `alibaba.com`、`taobao.com`、`tmall.com` 及其子域名下的完整 HTTP / HTTPS 商品链接。1688 和其他域名会被拒绝，批量任务会将对应商品计入失败，不进入浏览器采集或文案生成流程。淘宝与天猫仍然支持，不属于拒绝范围。
+采集层使用 **Scrapling**，窗口使用 **CustomTkinter**。采集与 AI 生成异步并行，浏览器会话按平台复用。
 
-不支持淘口令短链（如 `m.tb.cn`）和天猫国际（`tmall.hk`），请使用上述支持平台的商品详情页完整链接。
+## 快速开始
 
-商品页面、账号权限和验证流程可能影响采集结果。采集时请遵守平台服务条款和访问限制，仅处理你有权访问和使用的商品页面及数据。
+适用于 **Windows 10 / 11，64 位**。准备自己的 DeepSeek 或 Gemini API Key，并确保电脑能够联网。
 
-淘宝、天猫变体优先读取当前商品的页面内嵌 SKU 数据，并以购买面板选项兜底。采集包含未选中及页面列出的售罄选项，不代表每个组合当前都有库存；“鞋码”写入“尺寸”列。请先登录相应平台，商品确实无变体时对应列可以为空。
-
-## 下载与使用
-
-Windows 10 / 11，64 位。前往 [GitHub Releases](https://github.com/NothiZ/Product-Details-Generation-2.0/releases) 下载 `ProductDetailsDesktop-win-x64.zip`。
+前往 **[Releases 下载最新版](https://github.com/NothiZ/Product-Details-Generation-2.0/releases/latest)**，下载 `ProductDetailsDesktop-win-x64.zip`。
 
 1. **完整解压 ZIP**，打开 `ProductDetailsDesktop.exe`。请保留旁边的 `_internal` 文件夹。
 2. 在附带的 `输入模板.xlsx` 中填写商品链接，或选择自己的 `.xlsx` 文件。
@@ -45,9 +55,24 @@ Windows 10 / 11，64 位。前往 [GitHub Releases](https://github.com/NothiZ/Pr
 
 详细操作见 [桌面版使用说明](DESKTOP_USAGE.txt)。
 
-### Windows 安全提示
+> **完整解压后再运行。** EXE 旁边的 `_internal` 是必需的依赖目录，不能只复制 EXE。
 
-当前发布的 exe 未进行代码签名，下载或首次启动时可能出现 SmartScreen 信誉提示。请从本仓库 Releases 下载，并确认下载地址属于本仓库、版本符合预期；出现明确的恶意软件检测时应停止运行并反馈，不要关闭安全防护。相关机制见 [Microsoft SmartScreen 说明](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation)。
+## 支持平台
+
+
+| 平台                   | 商品信息         | 可选变体                 |
+| :--------------------- | :--------------- | :----------------------- |
+| **Alibaba.com 国际站** | 价格、属性及详情 | 颜色、尺寸及其他规格     |
+| **淘宝**               | 价格、属性及详情 | 颜色分类、尺码及其他规格 |
+| **天猫**               | 价格、属性及详情 | 颜色分类、鞋码及其他规格 |
+
+接受 `alibaba.com`、`taobao.com`、`tmall.com` 及其子域名下的完整 HTTP / HTTPS 商品链接。
+
+**不支持 1688、淘口令短链（`m.tb.cn`）、天猫国际（`tmall.hk`）及其他域名。** 请使用支持平台的商品详情页完整链接；不支持的链接会记录失败原因，不进入采集或生成流程。
+
+淘宝、天猫变体优先读取当前商品的页面内嵌 SKU 数据，并以购买面板选项兜底。“鞋码”写入输出表的“尺寸”列。采集包含未选中和页面列出的售罄选项，**不代表所有组合当前都有库存**；无变体商品的对应列可以为空。
+
+商品页面、账号权限和验证流程可能影响采集结果。请遵守平台服务条款和访问限制，仅处理你有权访问和使用的商品页面及数据。
 
 ## Excel 格式与任务保存
 
@@ -60,13 +85,25 @@ Windows 10 / 11，64 位。前往 [GitHub Releases](https://github.com/NothiZ/Pr
 
 输出表包含以下结果列：
 
-`价格`、`AI中文标题`、`AI英文标题`、`AI中文详情`、`AI英文详情`、`颜色`、`尺寸`、`其他规格`、`需检查`、`失败原因`。
+
+| 内容       | 输出列                             |
+| :--------- | :--------------------------------- |
+| 商品信息   | `价格`、`颜色`、`尺寸`、`其他规格` |
+| 中文文案   | `AI中文标题`、`AI中文详情`         |
+| 英文文案   | `AI英文标题`、`AI英文详情`         |
+| 检查与处理 | `需检查`、`失败原因`               |
+
+
+| 详情模板   | 结构                                           |
+| :--------- | :--------------------------------------------- |
+| **模板 1** | Key: Value 列表                                |
+| **模板 2** | Details + Specifications，分为详情与规格两部分 |
 
 内容取舍由 prompt 负责，本地保留格式整理及按明确字段名过滤产地、型号等规则。每条商品只进行一次文案生成，不因指定词或空内容自动重写；接口连接异常的重试仍使用原有网络处理机制。
 
-“需检查”列只列出最终标题、详情中命中的词，如 OEM、ODM、批发、贴牌、平台名称、wholesale、logo customization、旗舰店和 LOGO。命中时保留原文、正常导出并计入成功，不触发重写，也不影响断点续跑；未命中时留空。可逐条人工修改，或筛选该列集中处理。
+**需检查**：列出文案中命中的指定词，例如 OEM、批发、平台名称和 LOGO。保留原文、正常导出并计入成功，不触发重写，也不影响续跑。可逐条修改，或筛选这一列集中处理；未命中时留空。
 
-“失败原因”仅记录真失败：链接不支持、采集失败、接口调用失败，或必要的中英文标题、详情缺失。失败行不计入成功，已有的部分文案会尽量保留供人工修改；下次续跑可补做。完整的已生成文案即使命中指定词，也会复用，只更新“需检查”提示。旧版仅因指定词记录的失败原因会在完整文案被载入时清除。
+**失败原因**：仅记录链接不支持、采集失败、接口调用失败，或必要的中英文标题、详情缺失等真失败。失败行会尽量保留已有的部分文案，下次续跑时可补做。完整文案即使命中指定词，也会复用，只更新“需检查”；旧版仅因指定词留下的失败标记会在完整文案载入时清除。
 
 成功和失败的结果都按原保存间隔落盘。“需检查”只覆盖指定词，不是语义审核结果，最终仍以人工审核为准。
 
@@ -76,7 +113,34 @@ Windows 10 / 11，64 位。前往 [GitHub Releases](https://github.com/NothiZ/Pr
 
 输入与输出不能使用同一个文件。生成内容请核对后再使用，尤其是价格、规格及 AI 生成的产品描述。
 
-## 从源码运行
+## 常见问题
+
+<details>
+<summary><strong>登录后仍然抓不到商品或变体，怎么办？</strong></summary>
+
+检查是否使用支持平台的商品详情页完整链接，并确认登录没有失效。保持“显示浏览器”勾选，按页面提示手动完成验证码或其他验证。
+
+部分商品没有变体，或受账号权限、页面结构及平台访问限制影响，仍可能采集失败。源码用户可以使用下方的单条商品检查命令排查。
+
+</details>
+
+<details>
+<summary><strong>为什么 ZIP 有几百 MB？</strong></summary>
+
+发布包包含 Python 运行时、依赖库、Patchright 驱动和 Chromium，因此其他电脑无需安装 Python 或浏览器。打包配置已排除未使用的 Playwright 驱动资源。
+
+</details>
+
+<details>
+<summary><strong>Windows 提示程序未签名，怎么办？</strong></summary>
+
+当前 EXE 未进行代码签名，下载或首次启动时可能出现 SmartScreen 信誉提示。请从本仓库 Releases 下载，并确认来源和版本；出现明确的恶意软件检测时，应停止运行并反馈，不要关闭安全防护。
+
+相关机制见 [Microsoft SmartScreen 说明](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation)。
+
+</details>
+
+## 源码运行
 
 推荐在 Windows 64 位环境使用 **Python 3.12**，当前依赖至少需要 Python 3.11。在 PowerShell 中执行：
 
@@ -96,7 +160,8 @@ $env:PLAYWRIGHT_SKIP_BROWSER_GC = "1"
 
 源码仓库不包含生成后的 `输入模板.xlsx`。自行创建 `.xlsx` 文件，在第一行填写 `链接`、后续每行填写一个商品详情链接即可，无需先运行打包脚本。
 
-### 命令行批量生成
+<details>
+<summary><strong>命令行批量生成与环境变量</strong></summary>
 
 将 `.env.example` 复制为 `.env`，填写所选服务的 API Key：
 
@@ -110,24 +175,30 @@ Copy-Item .env.example .env
 
 ```powershell
 .\venv\Scripts\python.exe login.py alibaba
-# 淘宝和天猫统一使用 login.py taobao；旧命令 login.py tmall 仍兼容
+# 淘宝 / 天猫按需使用下面的统一入口
+.\venv\Scripts\python.exe login.py taobao
 .\venv\Scripts\python.exe run.py
 ```
 
-`DESC_TEMPLATE` 可选 `template1`（Key: Value 列表）或 `template2`（Details + Specifications）。`RESUME = True` 启用断点续跑。
+旧命令 `login.py tmall` 仍兼容。`DESC_TEMPLATE` 可选 `template1`（Key: Value 列表）或 `template2`（Details + Specifications），`RESUME = True` 启用断点续跑。
 
 命令行还可在 `.env` 或系统环境变量中配置：
 
 
-| 变量             | 作用                                    | 程序默认值                     |
-| ---------------- | --------------------------------------- | ------------------------------ |
-| `DEEPSEEK_MODEL` | DeepSeek 模型名称                       | `deepseek-chat`                |
-| `GEMINI_MODEL`   | Gemini 模型名称                         | `gemini-2.5-flash`             |
-| `LLM_RPM`        | AI 请求的每分钟限速，`0` 表示不主动限速 | DeepSeek 为`0`，Gemini 为 `10` |
+| 变量               | 作用                                    | 程序默认值                     |
+| ------------------ | --------------------------------------- | ------------------------------ |
+| `DEEPSEEK_API_KEY` | DeepSeek API Key                        | 自行填写                       |
+| `GEMINI_API_KEY`   | Gemini API Key                          | 自行填写                       |
+| `DEEPSEEK_MODEL`   | DeepSeek 模型名称                       | `deepseek-chat`                |
+| `GEMINI_MODEL`     | Gemini 模型名称                         | `gemini-2.5-flash`             |
+| `LLM_RPM`          | AI 请求的每分钟限速，`0` 表示不主动限速 | DeepSeek 为`0`，Gemini 为 `10` |
 
 Gemini 的 `10` 次/分钟是本程序的默认限速，不代表服务商向你的账号提供的额度；批量任务会因限速等待。请按账号实际限制调整，不要仅靠提高并发绕过额度。系统中已存在的同名环境变量优先于 `.env`；桌面版的模型以窗口设置为准，`LLM_RPM` 仍可通过环境变量设置。
 
-### 单条商品采集检查
+</details>
+
+<details>
+<summary><strong>单条商品采集检查</strong></summary>
 
 ```powershell
 .\venv\Scripts\python.exe check_product.py "商品详情页的完整链接"
@@ -135,7 +206,10 @@ Gemini 的 `10` 次/分钟是本程序的默认限速，不代表服务商向你
 
 此命令不调用 AI，也不修改批量输出表。结果默认保存至 `debug/product_check.json`，其中 `variant_dimensions` 为变体维度与全部选项，`variants` 为输出表使用的颜色、尺寸及其他规格。添加 `--headless` 可隐藏浏览器；需要手动验证时保持浏览器可见。
 
-## 打包 Windows 程序
+</details>
+
+<details>
+<summary><strong>打包 Windows 程序</strong></summary>
 
 在已创建虚拟环境的项目目录中执行：
 
@@ -160,7 +234,23 @@ dist/slim-ui/
 
 `build_desktop.ps1` 使用 **UTF-8 with BOM** 编码，兼容 Windows PowerShell 5.1；编辑后请保留该编码，避免中文模板生成失败。
 
+</details>
+
+<details>
+<summary><strong>运行回归测试</strong></summary>
+
+```powershell
+.\venv\Scripts\python.exe -B -m unittest discover -s tests -v
+```
+
+回归测试使用本地样本和模拟接口，不调用真实商品平台或 AI 服务。打包脚本的中文编码测试需要 Windows PowerShell。
+
+</details>
+
 ## 项目结构
+
+<details>
+<summary><strong>查看主要文件及用途</strong></summary>
 
 
 | 文件                                 | 用途                               |
@@ -178,31 +268,26 @@ dist/slim-ui/
 
 开发过程文档和历史源码校验快照已集中在 [docs/dev](docs/dev/README.md)，不参与程序运行。
 
-## 与 1.x 的简要对比
+</details>
+
+## 版本更新
+
+### [v2.0.1](https://github.com/NothiZ/Product-Details-Generation-2.0/releases/tag/v2.0.1)
+
+- 补齐淘宝、天猫变体采集，支持内嵌 SKU、购买面板及常见旧版选项列表。
+- 合并“淘宝 / 天猫”登录，统一命令行和桌面版的登录态目录。
+- 增加“需检查”提示，保留原文供人工编辑；真失败保留原因及可用的部分文案。
+- 改进加粗标签、中文冒号、空内容处理和商品域名校验。
+- 修复桌面发布包的离线浏览器自检兼容问题。
+
+完整发布包及说明见 [Releases](https://github.com/NothiZ/Product-Details-Generation-2.0/releases)。源码修改需重新打包后，才会包含在 EXE 中。
+
+<details>
+<summary><strong>与 1.x 的简要对比</strong></summary>
 
 1.x 以命令行脚本为主要使用方式；2.0 使用 Scrapling 采集层和可复用的异步浏览器会话，提供桌面窗口及 Windows 分发包。当前版本可在窗口选择两种详情模板、查看进度日志，并执行登录、断点续跑与停止保存。
 
-## 变更记录
-
-### 未发布
-
-- 合并“淘宝 / 天猫”登录按钮，命令行与窗口版统一保存、读取用户数据目录中的登录态。
-- 补齐淘宝、天猫的变体采集，支持当前购买面板、完整内嵌 SKU 及常见旧版选项列表。
-- 增加“需检查”词检测提示，不删词、不重写、不影响续跑；真失败保留原因及可用的部分文案，支持人工修改与续跑补做。
-- 内容筛选主要交给 prompt，本地保留格式整理、明确属性字段过滤及有效内容校验，减少正常词语误删。
-- 修复加粗标签、中文冒号和空内容处理，重复标题使用序号去重。
-- 按真实域名校验商品链接，拒绝 1688、未支持域名和伪装平台链接。
-- 补充文案、链接及批量失败处理测试，整理开发文档。
-
-已发布程序及对应说明见 [Releases](https://github.com/NothiZ/Product-Details-Generation-2.0/releases)。未发布的源码修改需重新打包后才会包含在 exe 中。
-
-## 测试
-
-```powershell
-.\venv\Scripts\python.exe -B -m unittest discover -s tests -v
-```
-
-回归测试使用本地样本和模拟接口，不调用真实商品平台或 AI 服务。打包脚本的中文编码测试需要 Windows PowerShell。
+</details>
 
 ## 本地数据与 API Key
 

@@ -7,6 +7,21 @@ import llm_client
 
 
 class LlmNetworkErrorTests(unittest.TestCase):
+    def test_deepseek_balance_formats_available_and_insufficient_amounts(self):
+        session = MagicMock()
+        with patch.object(llm_client, "_tls", types.SimpleNamespace(s=session)):
+            for available, amount, label in ((True, "110.00", "可用"), (False, "0.00", "余额不足")):
+                with self.subTest(available=available):
+                    session.get.return_value.json.return_value = {
+                        "is_available": available,
+                        "balance_infos": [{"total_balance": amount, "currency": "CNY"}],
+                    }
+                    self.assertEqual(llm_client.get_deepseek_balance("test-key"), f"{label}：{amount} CNY")
+                    session.get.assert_called_with(
+                        "https://api.deepseek.com/user/balance",
+                        headers={"Authorization": "Bearer test-key"}, timeout=15,
+                    )
+
     def test_connection_failure_keeps_root_cause_and_does_not_sleep_after_last_attempt(self):
         session=MagicMock()
         session.post.side_effect=requests.ConnectionError("DNS lookup failed: getaddrinfo failed")

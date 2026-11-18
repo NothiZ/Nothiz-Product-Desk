@@ -54,10 +54,24 @@ def _throttle(rpm: int) -> None:
     time.sleep(max(0.0, slot - now))
 
 
-def _post(url: str, headers: dict, body: dict) -> dict:
-    """POST + 重试：429/5xx/网络错误指数退避，其余 HTTP 错误直接抛出。"""
+def _session() -> requests.Session:
     sess = getattr(_tls, "s", None) or requests.Session()
     _tls.s = sess
+    return sess
+
+
+def _redact_credentials(detail: str, headers: dict) -> str:
+    for name, value in headers.items():
+        if name.lower() in ("authorization", "x-goog-api-key"):
+            detail = detail.replace(value, "[redacted]")
+            if value.startswith("Bearer "):
+                detail = detail.replace(value[7:], "[redacted]")
+    return re.sub(r"([a-z][a-z0-9+.-]*://)[^\s/?#]*@", r"\1[redacted]@", detail, flags=re.I)
+
+
+def _post(url: str, headers: dict, body: dict) -> dict:
+    """POST + 重试：429/5xx/网络错误指数退避，其余 HTTP 错误直接抛出。"""
+    sess = _session()
     last = None
     for attempt in range(4):
         wait = 5.0 * 2 ** attempt
@@ -73,20 +87,37 @@ def _post(url: str, headers: dict, body: dict) -> dict:
                 r.raise_for_status()
                 return r.json()
         except (requests.ConnectionError, requests.Timeout) as e:
-            detail = str(e)
-            # Retain transport diagnostics without exposing API or proxy credentials.
-            for name, value in headers.items():
-                if name.lower() in ("authorization", "x-goog-api-key"):
-                    detail = detail.replace(value, "[redacted]")
-                    if value.startswith("Bearer "):
-                        detail = detail.replace(value[7:], "[redacted]")
-            detail = re.sub(r"([a-z][a-z0-9+.-]*://)[^\s/?#]*@", r"\1[redacted]@", detail, flags=re.I)
+            detail = _redact_credentials(str(e), headers)
             last = f"{type(e).__name__}: {detail[:800]}"
         if attempt == 3:
             break
         print(f"[llm] {last}，{wait:.0f}s 后重试（{attempt + 1}/4）")
         time.sleep(wait)
     raise RuntimeError(f"[llm] 重试 4 次仍失败：{last}")
+
+
+def get_deepseek_balance(api_key: str) -> str:
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        response = _session().get("https://api.deepseek.com/user/balance", headers=headers, timeout=15)
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        code = exc.response.status_code
+        message = {401: "Key 无效", 403: "Key 无权查询余额"}.get(code, f"服务返回 HTTP {code}")
+        raise RuntimeError(message) from None
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        detail = _redact_credentials(str(exc), headers)[:800]
+        raise RuntimeError(f"无法连接 DeepSeek，请检查网络或代理（{detail}）") from None
+    except requests.RequestException:
+        raise RuntimeError("无法发送余额查询请求，请检查 API Key 格式和网络设置") from None
+
+    try:
+        data = response.json()
+        amounts = "、".join(f'{item["total_balance"]} {item["currency"]}' for item in data.get("balance_infos", []))
+        label = "可用" if data["is_available"] else "余额不足"
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise RuntimeError("DeepSeek 返回的余额数据格式有误") from None
+    return f"{label}：{amounts or '无余额信息'}"
 
 
 def _deepseek(prompt: str, temperature: float, key: str, model: str) -> str:

@@ -1,8 +1,10 @@
-"""Chinese desktop window; all browser and API work runs in a child process."""
+"""Chinese desktop window with a separate worker process for generation and login."""
 import argparse
 import multiprocessing
 import os
 from pathlib import Path
+from queue import Empty, SimpleQueue
+from threading import Thread
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -15,8 +17,9 @@ from desktop_runtime import (
 )
 
 
-BG, CARD, BORDER = "#F4F6FA", "#FFFFFF", "#E3E7EE"
-TEXT, MUTED = "#1F2937", "#6B7280"
+BG, CARD, BORDER = "#F0F3F8", "#FFFFFF", "#E3E7EE"
+TEXT, MUTED = "#1F2937", "#586579"
+SECONDARY, SECONDARY_HOVER = "#E2E9F3", "#D4E0EF"
 ACCENT, ACCENT_HOVER, ACCENT_OFF = "#2563EB", "#1D4ED8", "#A9BEEF"
 OK, ERR = "#059669", "#DC2626"
 FONT = "Microsoft YaHei UI"
@@ -97,8 +100,8 @@ class DesktopApp(ctk.CTk):
             self.append_log(startup_error)
 
     def _build_window(self, compact=False):
-        gap = 2 if compact else 7
-        h = 30 if compact else 36  # 控件高度
+        gap = 2 if compact else 6
+        h = 30 if compact else 34  # 控件高度
         font = lambda size, bold=False: ctk.CTkFont(family=FONT, size=size, weight="bold" if bold else "normal")
         root = ctk.CTkFrame(self, fg_color="transparent")
         root.pack(fill="both", expand=True, padx=16 if compact else 28, pady=(10, 10) if compact else (20, 16))
@@ -108,11 +111,12 @@ class DesktopApp(ctk.CTk):
         def text(parent, value, size=13, bold=False, color=TEXT, **kw):
             return ctk.CTkLabel(parent, text=value, font=font(size, bold), text_color=color, **kw)
 
-        def section(row, title, pady=(14, 6)):
-            text(root, title, 14, True).grid(row=row, column=0, sticky="w", pady=(6, 3) if compact else pady)
+        def section(row, title):
+            text(root, title, 14, True).grid(
+                row=row, column=0, sticky="w", pady=(6, 3) if compact else (14, 5))
 
-        def card(row):
-            frame = ctk.CTkFrame(root, fg_color=CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        def card(row, border_width=0):
+            frame = ctk.CTkFrame(root, fg_color=CARD, corner_radius=12, border_width=border_width, border_color=BORDER)
             frame.grid(row=row, column=0, sticky="nsew" if row == 8 else "ew")
             return frame
 
@@ -131,14 +135,15 @@ class DesktopApp(ctk.CTk):
                                    text_color=TEXT, fg_color=ACCENT, hover_color=ACCENT_HOVER,
                                    border_color="#B8C0CE", corner_radius=5, checkbox_width=20, checkbox_height=20)
 
-        def button(parent, label, command, primary=False):
+        def button(parent, label, command, primary=False, border_width=0):
             if primary:
                 return ctk.CTkButton(parent, text=label, command=command, height=h + 2, corner_radius=8, width=110,
                                      fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="#FFFFFF",
                                      text_color_disabled="#FFFFFF", font=font(13, True))
             return ctk.CTkButton(parent, text=label, command=command, height=h, corner_radius=8, width=88,
-                                 fg_color=CARD, hover_color="#EEF2F9", text_color=TEXT, text_color_disabled="#A0A7B4",
-                                 border_width=1, border_color="#D5DAE3", font=font(13))
+                                 fg_color=SECONDARY, hover_color=SECONDARY_HOVER,
+                                 text_color=TEXT, text_color_disabled="#788699",
+                                 border_width=border_width, border_color="#D5DAE3", font=font(13))
 
         header = ctk.CTkFrame(root, fg_color="transparent")
         header.grid(row=0, column=0, sticky="w")
@@ -160,7 +165,7 @@ class DesktopApp(ctk.CTk):
             text(files, label, color=MUTED).grid(row=row, column=0, sticky="w", padx=(18, 0), pady=gap)
             field = entry(files, textvariable=variable)
             field.grid(row=row, column=1, sticky="ew", pady=gap)
-            choose = button(files, "选择…", callback)
+            choose = button(files, "选择", callback)
             choose.grid(row=row, column=2, padx=(12, 18), pady=gap)
             self.editable_widgets.extend([(field, "normal"), (choose, "normal")])
 
@@ -176,8 +181,14 @@ class DesktopApp(ctk.CTk):
         model = entry(settings, textvariable=self.model_var)
         model.grid(row=0, column=3, sticky="ew", padx=(0, 18), pady=gap)
         text(settings, "API Key", color=MUTED).grid(row=1, column=0, sticky="w", padx=(18, 0), pady=gap)
-        key = entry(settings, textvariable=self.key_var, show="●")
-        key.grid(row=1, column=1, columnspan=2, sticky="ew", pady=gap)
+        key_row = ctk.CTkFrame(settings, fg_color="transparent")
+        key_row.grid(row=1, column=1, columnspan=2, sticky="ew", pady=gap)
+        key_row.grid_columnconfigure(0, weight=1)
+        key = entry(key_row, textvariable=self.key_var, show="●")
+        key.grid(row=0, column=0, sticky="ew")
+        self.balance_button = button(key_row, "查询余额", self.query_balance)
+        if self.current_provider == "deepseek":
+            self.balance_button.grid(row=0, column=1, padx=(12, 0))
         remember = check(settings, "在本机记住 API Key", self.remember_var, self.remember_changed)
         remember.grid(row=1, column=3, sticky="w", padx=(16, 18), pady=gap)
         text(settings, "详情模板", color=MUTED).grid(row=2, column=0, sticky="w", padx=(18, 0), pady=gap)
@@ -192,7 +203,7 @@ class DesktopApp(ctk.CTk):
         self.editable_widgets.extend([(provider, "readonly"), (model, "normal"), (key, "normal"), (remember, "normal"), (template, "readonly"), (resume, "normal"), (browser, "normal")])
 
         actions = ctk.CTkFrame(root, fg_color="transparent")
-        actions.grid(row=6, column=0, sticky="ew", pady=(8 if compact else 16, 0))
+        actions.grid(row=6, column=0, sticky="ew", pady=(8 if compact else 14, 0))
         text(actions, "平台登录", color=MUTED).pack(side="left", padx=(0, 10))
         for label, site in [("阿里巴巴", "alibaba"), ("淘宝 / 天猫", "taobao")]:
             login = button(actions, label, lambda selected=site: self.start_login(selected))
@@ -206,12 +217,12 @@ class DesktopApp(ctk.CTk):
         self.stop_button.configure(state="disabled")
         self.stop_button.pack(side="right", padx=10)
 
-        section(7, "运行状态", pady=(10 if compact else 18, 6))
-        logs = card(8)
+        section(7, "运行状态")
+        logs = card(8, border_width=0)
         logs.grid_columnconfigure(0, weight=1)
         logs.grid_rowconfigure(3, weight=1)
         top = ctk.CTkFrame(logs, fg_color="transparent")
-        top.grid(row=0, column=0, sticky="ew", padx=18, pady=(8 if compact else 14, 0))
+        top.grid(row=0, column=0, sticky="ew", padx=18, pady=(8 if compact else 12, 0))
         top.grid_columnconfigure(0, weight=1)
         self.status_label = text(top, "", 13, True, MUTED, anchor="w", justify="left", wraplength=560)
         self.status_label.grid(row=0, column=0, sticky="w")
@@ -220,13 +231,13 @@ class DesktopApp(ctk.CTk):
         self.counts_label.grid(row=0, column=1, sticky="e")
         self.progress = ctk.CTkProgressBar(logs, height=8, corner_radius=4, fg_color="#E5E9F2", progress_color=ACCENT)
         self._progress(0, 1)
-        self.progress.grid(row=1, column=0, sticky="ew", padx=18, pady=(10, 0))
+        self.progress.grid(row=1, column=0, sticky="ew", padx=18, pady=(6, 0))
         self.continue_button = button(logs, "我已完成登录，继续", self.continue_login)
         self.continue_button.configure(width=160)
         self.continue_button.grid(row=2, column=0, sticky="w", padx=18, pady=(10, 0))
         self.continue_button.grid_remove()
-        self.log_text = ctk.CTkTextbox(logs, height=110 if compact else 170, wrap="word", fg_color="#FAFBFD", text_color=TEXT,
-                                       border_width=1, border_color=BORDER, corner_radius=8,
+        self.log_text = ctk.CTkTextbox(logs, height=110 if compact else 170, wrap="word", fg_color="#F5F7FB", text_color=TEXT,
+                                       border_width=0, corner_radius=8,
                                        font=ctk.CTkFont(family="Consolas", size=12), state="disabled")
         for tag, color in (("err", "#DC2626"), ("ok", "#059669"), ("dim", MUTED)):
             self.log_text.tag_config(tag, foreground=color)
@@ -280,6 +291,42 @@ class DesktopApp(ctk.CTk):
         self.current_provider = self.PROVIDERS[self.provider_var.get()]
         self.key_var.set(self.keys.get(self.current_provider, ""))
         self.model_var.set(self.models[self.current_provider])
+        if self.current_provider == "deepseek":
+            self.balance_button.grid(row=0, column=1, padx=(12, 0))
+        else:
+            self.balance_button.grid_forget()
+
+    def query_balance(self):
+        if self.current_provider != "deepseek" or self.balance_button.cget("state") == "disabled":
+            return
+        key = self.key_var.get().strip()
+        if not key:
+            self.append_log("DeepSeek 余额查询失败：请先填写 API Key")
+            return
+        result = SimpleQueue()
+
+        def fetch():
+            try:
+                from llm_client import get_deepseek_balance
+                message = f"DeepSeek 余额：{get_deepseek_balance(key)}"
+            except RuntimeError as exc:
+                message = f"DeepSeek 余额查询失败：{exc}"
+            except Exception:
+                message = "DeepSeek 余额查询失败：查询服务暂时无法使用"
+            result.put(message)
+
+        def show_result():
+            try:
+                message = result.get_nowait()
+            except Empty:
+                self.after(100, show_result)
+                return
+            self.balance_button.configure(state="normal", text="查询余额")
+            self.append_log(message)
+
+        self.balance_button.configure(state="disabled", text="查询中…")
+        Thread(target=fetch, daemon=True).start()
+        self.after(100, show_result)
 
     def collect_settings(self):
         self.keys[self.current_provider] = self.key_var.get()

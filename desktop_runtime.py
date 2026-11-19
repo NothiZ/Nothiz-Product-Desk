@@ -12,13 +12,20 @@ from pathlib import Path
 APP_TITLE = "产品详情生成"
 EVENT_PREFIX = "@@PD_EVENT "
 _PUBLIC_SETTINGS = ("provider", "model", "template", "input_file", "output_file", "resume", "show_browser")
+IMAGE_MODES = ("常规产品图", "平铺图")
+
+
+def default_search_settings():
+    return {"search": "婴儿奶瓶消毒器", "pages": 2, "limit": 60, "required": "", "excluded": "",
+            "category": "", "prefix": "", "image_mode": IMAGE_MODES[0], "show_browser": True}
 
 
 def default_settings():
     return {"provider": "deepseek", "model": "deepseek-chat", "template": "template2",
             "input_file": "", "output_file": "", "resume": True, "show_browser": True,
             "remember_key": False, "api_keys": {},
-            "models": {"deepseek": "deepseek-chat", "gemini": "gemini-2.5-flash"}}
+            "models": {"deepseek": "deepseek-chat", "gemini": "gemini-2.5-flash"},
+            "candidate_search": default_search_settings(), "last_candidate_wall": ""}
 
 
 def user_data_dir():
@@ -115,6 +122,30 @@ def validate_generation(settings, api_key):
     return normalized
 
 
+def validate_candidate_search(settings):
+    normalized = {name: settings.get(name, value) for name, value in default_search_settings().items()}
+    for name in ("search", "required", "excluded", "category", "prefix", "image_mode"):
+        normalized[name] = str(normalized[name]).strip()
+    if not any(term.strip() for term in re.split(r"[,，]", normalized["search"])):
+        raise ValueError("请填写搜索关键词。")
+    for name, label in (("pages", "搜索页数"), ("limit", "候选上限")):
+        try:
+            value = int(str(normalized[name]))
+        except ValueError:
+            value = 0
+        if value < 1:
+            raise ValueError(f"{label}请填写大于 0 的整数。")
+        normalized[name] = value
+    prefix = normalized["prefix"]
+    if prefix and not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,7}", prefix):
+        raise ValueError("编号前缀须以英文字母开头，最多 8 个英文字母或数字。")
+    normalized["prefix"] = prefix.upper()
+    if normalized["image_mode"] not in IMAGE_MODES:
+        raise ValueError("请选择有效的图片模式。")
+    normalized["show_browser"] = bool(normalized["show_browser"])
+    return normalized
+
+
 @dataclass
 class RunningTask:
     folder: Path
@@ -191,12 +222,14 @@ class RunningTask:
 
 
 def launch_job(settings, *, kind="generate", api_key="", site="alibaba"):
-    if kind not in ("generate", "login"):
+    if kind not in ("generate", "login", "search"):
         raise ValueError("未知任务类型")
     if site not in ("alibaba", "taobao", "tmall"):
         raise ValueError("未知登录站点")
     if kind == "generate":
         settings = validate_generation(settings, api_key)
+    public_settings = (validate_candidate_search(settings) if kind == "search" else
+                       {k: settings.get(k, default_settings()[k]) for k in _PUBLIC_SETTINGS})
     # Migrate before the worker receives its explicit data-directory override.
     for filename in ("alibaba_state.json", "taobao_state.json", "tmall_auth.json"):
         login_state_path(filename)
@@ -204,8 +237,7 @@ def launch_job(settings, *, kind="generate", api_key="", site="alibaba"):
     folder.mkdir(parents=True)
     task_file = folder / "task.json"
     # Never serialize keys into job files or the command line.
-    payload = {"kind": kind, "site": site, "data_dir": str(user_data_dir()),
-               "settings": {k: settings.get(k, default_settings()[k]) for k in _PUBLIC_SETTINGS}}
+    payload = {"kind": kind, "site": site, "data_dir": str(user_data_dir()), "settings": public_settings}
     write_json(task_file, payload)
     command = [sys.executable]
     if not getattr(sys, "frozen", False):
@@ -214,7 +246,7 @@ def launch_job(settings, *, kind="generate", api_key="", site="alibaba"):
     env = os.environ.copy()
     env.update(PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PRODUCT_DETAILS_DATA_DIR=str(user_data_dir()))
     provider = settings.get("provider", "deepseek")
-    if api_key:
+    if kind == "generate" and api_key:
         env[f"{provider.upper()}_API_KEY"] = str(api_key).strip()
     process = subprocess.Popen(command, cwd=str(user_data_dir()), env=env, stdin=subprocess.DEVNULL,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

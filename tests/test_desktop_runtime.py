@@ -59,6 +59,19 @@ class DesktopRuntimeTests(unittest.TestCase):
         self.assertEqual(spawn.call_args.kwargs["env"]["DEEPSEEK_API_KEY"], "test-secret")
         self.assertEqual(task.result(), {})
 
+    def test_search_serializes_only_validated_search_settings(self):
+        settings = {"search": " 婴儿奶瓶消毒器 ", "pages": "2", "limit": "60",
+                    "prefix": "ab1", "api_keys": {"deepseek": "test-secret"}}
+        with patch.object(runtime.subprocess, "Popen"):
+            task = runtime.launch_job(settings, kind="search")
+        payload = json.loads((task.folder / "task.json").read_text(encoding="utf-8"))
+        self.assertEqual(payload["settings"], {"search": "婴儿奶瓶消毒器", "pages": 2, "limit": 60,
+                                               "required": "", "excluded": "", "category": "",
+                                               "prefix": "AB1", "image_mode": "常规产品图", "show_browser": True})
+        for invalid in ({"pages": 0}, {"search": " ,， "}, {"prefix": "中文"}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                runtime.launch_job({**settings, **invalid}, kind="search")
+
     def test_log_reader_preserves_partial_lines_and_events(self):
         child = MagicMock()
         child.poll.return_value = None

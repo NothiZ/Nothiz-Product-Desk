@@ -94,6 +94,11 @@ def run_worker(task_file):
                     result.update(asyncio.run(_generate(settings, folder, emit)))
                     result["message"] = (f"{'已停止并保存' if result['status'] == 'stopped' else '处理完成'}："
                                          f"成功 {result['done']}，失败 {result['failed']}")
+                elif payload["kind"] == "search":
+                    from candidate_wall import run_candidate_search
+
+                    result.update(run_candidate_search(payload["settings"], folder, emit, prompt,
+                                                       lambda: (folder / "stop").exists()))
                 else:
                     raise ValueError("未知任务类型")
             except KeyboardInterrupt:

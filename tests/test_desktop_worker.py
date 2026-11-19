@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 try:
@@ -48,6 +49,24 @@ class DesktopWorkerTests(unittest.TestCase):
         self.assertEqual(self.result()["status"],"finished")
         log=(self.task.parent/"events.jsonl").read_text(encoding="utf-8")
         self.assertIn('"type": "prompt"',log)
+
+    def test_search_worker_writes_the_wall_path_to_its_result(self):
+        self.payload.update(kind="search", settings={"search": "婴儿奶瓶消毒器"})
+        self.task.write_text(json.dumps(self.payload), encoding="utf-8")
+        wall = self.task.parent / "候选图片墙.html"
+
+        def run_search(settings, folder, emit, prompt, stop_requested):
+            self.assertEqual(settings, self.payload["settings"])
+            self.assertEqual(folder, self.task.parent.resolve())
+            self.assertFalse(stop_requested())
+            (folder / "stop").touch()
+            self.assertTrue(stop_requested())
+            emit({"type": "progress", "total": 1, "done": 1, "failed": 0})
+            return {"status": "stopped", "wall_file": str(wall)}
+
+        with patch.dict("sys.modules", {"candidate_wall": SimpleNamespace(run_candidate_search=run_search)}):
+            self.assertEqual(worker.run_worker(self.task), 0)
+        self.assertEqual(self.result()["wall_file"], str(wall))
 
     def test_browser_selftest_handles_local_fixtures_without_relaxing_product_validation(self):
         import scraper

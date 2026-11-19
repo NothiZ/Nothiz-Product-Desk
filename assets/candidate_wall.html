@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' file:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+  <title>候选商品</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --background: #f3f5fa;
+      --surface: #fff;
+      --ink: #192535;
+      --muted: #526378;
+      --line: #dce3ed;
+      --blue: #245adf;
+      --blue-hover: #184ac5;
+      --selected: #ecf3ff;
+      font: 14px/1.45 system-ui, "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: var(--background);
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { padding: 20px; }
+    button { font: inherit; }
+    button, input[type="checkbox"], a[href] { cursor: pointer; }
+    button:disabled, input:disabled { cursor: default; }
+    :focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+    ::selection { background: #d5e4ff; color: var(--ink); }
+    a { color: inherit; text-decoration: none; }
+    a:hover, a:focus-visible { color: var(--blue-hover); text-decoration: underline; text-underline-offset: .2em; }
+
+    .topbar, .actions, .options, .pager { display: flex; align-items: center; gap: 10px; }
+    .topbar { align-items: flex-start; justify-content: space-between; gap: 12px 24px; }
+    .actions, .options { flex-wrap: wrap; }
+    .actions { flex: 0 0 auto; }
+    h1 { margin: 0 0 2px; font-size: 1.35rem; line-height: 1.25; overflow-wrap: anywhere; }
+    .details, .options, .source, .footer-note { color: var(--muted); font-size: .86rem; }
+    .details, .options p, .source, .footer-note { margin: 0; }
+    .options { margin: 8px 0 10px; gap: 5px 22px; }
+    .options label { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; cursor: pointer; }
+    .selected-count { color: var(--blue-hover); font-weight: 650; white-space: nowrap; }
+    .control {
+      min-height: 36px;
+      padding: 6px 14px;
+      border: 1px solid #d1dae7;
+      border-radius: 7px;
+      color: var(--ink);
+      background: var(--surface);
+      white-space: nowrap;
+    }
+    .control:enabled:hover { background: #eaf0fb; border-color: #b7c7df; }
+    .control:enabled:active { background: #e0eafd; }
+    .control[aria-pressed="true"], .control[aria-pressed="true"]:hover {
+      color: var(--blue-hover);
+      background: #e5eeff;
+      border-color: #8facdf;
+    }
+    .control:disabled { color: #5c6b7b; background: #eef1f6; }
+    .primary, .primary:disabled { border-color: transparent; }
+    .primary { background: var(--blue); color: #fff; }
+    .primary:enabled:hover, .primary:enabled:active { background: var(--blue-hover); border-color: transparent; }
+    .primary:disabled { background: #dfe8f8; }
+    input[type="checkbox"] { width: 19px; height: 19px; margin: 0; accent-color: #086bed; }
+    .options input { width: 14px; height: 14px; }
+
+    .results {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--surface);
+    }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td { padding: 7px 12px; text-align: left; vertical-align: middle; }
+    th { color: var(--muted); font-weight: 500; font-size: .86rem; }
+    td { border-top: 1px solid var(--line); }
+    tbody tr.is-selected { background: var(--selected); }
+    tbody tr:hover { background: #f6f8fc; }
+    tbody tr.is-selected:hover { background: #e5eeff; }
+    .row-number, .pick, .resolution { font-variant-numeric: tabular-nums; }
+    .row-number { width: 5%; text-align: center; color: var(--muted); font-size: .86rem; }
+    .photo { width: 86px; }
+    .resolution { width: 119px; white-space: nowrap; }
+    .quality { width: 110px; }
+    .pick { width: 69px; text-align: center; }
+    .pick label { display: inline-grid; place-items: center; width: 34px; height: 34px; cursor: pointer; }
+    .product { overflow-wrap: anywhere; }
+    .source { margin-top: 2px; }
+    .thumbnail {
+      display: grid;
+      place-items: center;
+      padding: 0;
+      width: 60px;
+      height: 60px;
+      overflow: hidden;
+      border: 0;
+      border-radius: 7px;
+      color: var(--muted);
+      background: #e9eef6;
+      font-size: .78rem;
+    }
+    button.thumbnail:hover { box-shadow: inset 0 0 0 1px #789fe4; }
+    .thumbnail img { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .badge { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: .8rem; white-space: nowrap; }
+    .clear { color: #205f3c; background: #e3f2e8; }
+    .blurred { color: #83510c; background: #fff0d4; }
+    .low-resolution { color: #943b3b; background: #fce8e8; }
+    .unavailable, .pending { color: var(--muted); background: #edf1f6; }
+    .mobile-resolution, .mobile-number { display: none; }
+    .empty { padding: 30px 12px; text-align: center; color: var(--muted); }
+
+    .pager { justify-content: center; margin: 16px 0 12px; }
+    .page-status { min-width: 75px; text-align: center; font-variant-numeric: tabular-nums; }
+    .footer-note { text-align: center; }
+    dialog {
+      width: min(900px, calc(100% - 32px));
+      max-height: calc(100dvh - 32px);
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      color: var(--ink);
+      background: var(--surface);
+    }
+    dialog::backdrop { background: rgb(19 27 42 / 62%); }
+    .preview-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+    .preview-header h2 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+    .preview-actions { display: flex; gap: 6px; }
+    .preview-media { max-height: 72dvh; overflow: auto; }
+    #preview-image { display: block; max-width: 100%; max-height: 72dvh; margin: auto; object-fit: contain; }
+    dialog[data-actual-size] #preview-image { max-width: none; max-height: none; margin: 0; }
+
+    @media (max-width: 860px) {
+      .topbar { flex-wrap: wrap; }
+      .actions { flex: 0 1 auto; }
+    }
+
+    @media (max-width: 640px) {
+      main { padding: 12px; }
+      .actions { gap: 6px; }
+      .control { min-height: 42px; padding-inline: 9px; }
+      th, td { padding: 6px; }
+      .row-number, .resolution { display: none; }
+      .mobile-number { display: inline; }
+      .mobile-resolution { display: block; margin-top: 3px; color: var(--muted); font-size: .76rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .photo { width: 62px; }
+      .thumbnail { width: 50px; height: 50px; }
+      .quality { width: 80px; }
+      .badge { padding-inline: 5px; }
+      .pick { width: 48px; }
+      .pick label { width: 36px; height: 44px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="topbar">
+      <div>
+        <h1 id="heading" tabindex="-1">候选商品</h1>
+        <p class="details" id="summary"></p>
+      </div>
+      <div class="actions">
+        <span class="selected-count" id="selected-count" role="status">已选 0</span>
+        <button class="control" type="button" id="select-page">本页全选</button>
+        <button class="control" type="button" id="clear">清空</button>
+        <button class="control primary" type="button" id="export">导出选中（0）</button>
+      </div>
+    </header>
+    <div class="options">
+      <label><input type="checkbox" id="show-eliminated"><span id="eliminated-label">显示已淘汰（0）</span></label>
+      <p>清晰度为自动评估，仅供参考。点击主图可查看大图。</p>
+    </div>
+    <div class="results">
+      <table aria-label="候选商品">
+        <thead>
+          <tr>
+            <th scope="col" class="row-number">序号</th>
+            <th scope="col" class="photo">主图</th>
+            <th scope="col">标题</th>
+            <th scope="col" class="resolution">主图分辨率</th>
+            <th scope="col" class="quality">清晰度</th>
+            <th scope="col" class="pick">选择</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <nav class="pager" aria-label="候选商品分页">
+      <button class="control" type="button" id="previous">上一页</button>
+      <span class="page-status" id="page-status" role="status"></span>
+      <button class="control" type="button" id="next">下一页</button>
+    </nav>
+    <p class="footer-note">导出后回到桌面窗口，点“导入选中结果”。编号会在导入时生成。</p>
+    <noscript><p>请启用 JavaScript 后打开候选商品页面。</p></noscript>
+  </main>
+
+  <dialog id="preview" aria-labelledby="preview-title">
+    <div class="preview-header">
+      <h2 id="preview-title"></h2>
+      <div class="preview-actions">
+        <button class="control" type="button" id="actual-size" aria-pressed="false">原尺寸</button>
+        <button class="control" type="button" id="close-preview" autofocus>关闭</button>
+      </div>
+    </div>
+    <div class="preview-media" tabindex="0" aria-label="主图预览"><img id="preview-image" alt=""></div>
+  </dialog>
+
+  <script id="candidate-data" type="application/json">__CANDIDATE_DATA__</script>
+  <script>
+    "use strict";
+
+    const get = (id) => document.getElementById(id);
+    const { category, items } = JSON.parse(get("candidate-data").textContent);
+    const PAGE_SIZE = 20;
+    const selected = new Set();
+    const eligible = items.filter((item) => !item.rejected);
+    const eliminatedCount = items.length - eligible.length;
+    const qualityStyles = new Map([
+      ["清晰", "clear"], ["偏糊", "blurred"], ["分辨率低", "low-resolution"],
+      ["未获取", "unavailable"], ["待复核", "pending"]
+    ]);
+    const rows = get("rows");
+    const showEliminated = get("show-eliminated");
+    const selectPage = get("select-page");
+    const clear = get("clear");
+    const exportButton = get("export");
+    const previous = get("previous");
+    const next = get("next");
+    const preview = get("preview");
+    const previewImage = get("preview-image");
+    const actualSize = get("actual-size");
+    let page = 1;
+    let pageItems = [];
+
+    function productUrl(value) {
+      try {
+        const url = new URL(value);
+        const host = url.hostname;
+        if (url.protocol === "https:" && !url.port && !url.username && !url.password &&
+            (host === "alibaba.com" || host.endsWith(".alibaba.com"))) return url.href;
+      } catch {
+        // A malformed source URL remains plain text.
+      }
+      return "";
+    }
+
+    function make(tag, content, className) {
+      const element = document.createElement(tag);
+      if (content) element.textContent = content;
+      if (className) element.className = className;
+      return element;
+    }
+
+    function thumbnail(item, rank) {
+      const fallback = make("span", "无主图", "thumbnail");
+      if (!/^candidates\/[0-9]+\.(?:avif|bmp|gif|jpe?g|png|webp)$/i.test(item.image)) return fallback;
+
+      const button = make("button", "", "thumbnail");
+      button.type = "button";
+      button.setAttribute("aria-label", `放大查看第 ${rank} 张主图`);
+      const image = make("img");
+      image.alt = "";
+      image.loading = "lazy";
+      image.addEventListener("error", () => button.replaceWith(fallback), { once: true });
+      image.src = item.image;
+      button.append(image);
+      button.addEventListener("click", () => {
+        get("preview-title").textContent = item.title || `第 ${rank} 件商品的主图`;
+        previewImage.alt = item.title || "商品主图";
+        previewImage.src = item.image;
+        preview.showModal();
+      });
+      return button;
+    }
+
+    function candidateRow(item, rank) {
+      const row = make("tr");
+      const number = make("td", String(rank), "row-number");
+      const photo = make("td", "", "photo");
+      photo.append(thumbnail(item, rank));
+
+      const product = make("td", "", "product");
+      const url = productUrl(item.url);
+      const title = make(url ? "a" : "span", item.title || "未命名商品");
+      if (url) {
+        title.href = url;
+        title.target = "_blank";
+        title.rel = "noopener noreferrer";
+      }
+      const source = make("p", "", "source");
+      const domain = url ? new URL(url).hostname.replace(/^www\./, "") : "来源链接不可用";
+      source.append(make("span", `${rank} · `, "mobile-number"), domain);
+      if (item.rejected) source.append(" · 已淘汰");
+      product.append(title, source);
+
+      const size = item.width > 0 && item.height > 0 ? `${item.width} × ${item.height}` : "—";
+      const resolution = make("td", size, "resolution");
+      const quality = make("td", "", "quality");
+      const label = qualityStyles.has(item.quality) ? item.quality : "待复核";
+      quality.append(make("span", label, `badge ${qualityStyles.get(label)}`));
+      const mobileSize = make("span", size, "mobile-resolution");
+      mobileSize.setAttribute("aria-label", size === "—" ? "主图分辨率未知" : `主图分辨率 ${size}`);
+      quality.append(mobileSize);
+
+      const pickCell = make("td", "", "pick");
+      const pick = make("label");
+      const checkbox = make("input");
+      checkbox.type = "checkbox";
+      checkbox.dataset.id = item.id;
+      checkbox.setAttribute("aria-label", `选择第 ${rank} 件商品`);
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) selected.add(item.id);
+        else selected.delete(item.id);
+        updateSelection();
+      });
+      pick.append(checkbox);
+      pickCell.append(pick);
+      row.append(number, photo, product, resolution, quality, pickCell);
+      return row;
+    }
+
+    function updateSelection() {
+      for (const checkbox of rows.querySelectorAll("input[type=checkbox]")) {
+        checkbox.checked = selected.has(checkbox.dataset.id);
+        checkbox.closest("tr").classList.toggle("is-selected", checkbox.checked);
+      }
+      get("selected-count").textContent = `已选 ${selected.size}`;
+      exportButton.textContent = `导出选中（${selected.size}）`;
+      clear.disabled = exportButton.disabled = selected.size === 0;
+    }
+
+    function render() {
+      const visibleItems = showEliminated.checked ? items : eligible;
+      const pages = Math.ceil(visibleItems.length / PAGE_SIZE);
+      page = Math.min(page, pages || 1);
+      const offset = (page - 1) * PAGE_SIZE;
+      pageItems = visibleItems.slice(offset, offset + PAGE_SIZE);
+      rows.replaceChildren(...pageItems.map((item, index) => candidateRow(item, offset + index + 1)));
+      if (!pageItems.length) {
+        const message = items.length ? "当前候选均已淘汰，可勾选“显示已淘汰”查看。" : "本次搜索没有候选商品。";
+        const empty = make("td", message, "empty");
+        empty.colSpan = 6;
+        const row = make("tr");
+        row.append(empty);
+        rows.append(row);
+      }
+
+      const pageText = `第 ${pages ? page : 0} / ${pages} 页`;
+      get("summary").textContent = `共 ${items.length} 个，已自动淘汰 ${eliminatedCount} 个 · ${pageText}，每页 ${PAGE_SIZE} 个 · 跨页勾选会保留`;
+      get("page-status").textContent = pageText;
+      selectPage.disabled = !pageItems.length;
+      previous.disabled = page <= 1;
+      next.disabled = page >= pages;
+      updateSelection();
+    }
+
+    function goToPage(offset) {
+      page += offset;
+      render();
+      get("heading").focus();
+    }
+
+    function csvField(value) {
+      const field = String(value ?? "");
+      // Protect cells Excel could interpret as formulas, including after whitespace.
+      const safe = /^[\t\r\n]|^\s*[=+\-@＝＋－＠]/u.test(field) ? `'${field}` : field;
+      return `"${safe.replaceAll('"', '""')}"`;
+    }
+
+    function downloadSelection() {
+      const lines = ["商品 ID,链接,标题"];
+      for (const item of items) {
+        if (selected.has(item.id)) lines.push([item.id, item.url, item.title].map(csvField).join(","));
+      }
+      const url = URL.createObjectURL(new Blob(["\uFEFF", lines.join("\r\n"), "\r\n"], { type: "text/csv;charset=utf-8" }));
+      const link = make("a");
+      link.href = url;
+      link.download = "选中结果.csv";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }
+
+    const heading = category ? `候选商品 · ${category}` : "候选商品";
+    get("heading").textContent = document.title = heading;
+    get("eliminated-label").textContent = `显示已淘汰（${eliminatedCount}）`;
+    showEliminated.disabled = eliminatedCount === 0;
+    showEliminated.addEventListener("change", render);
+    selectPage.addEventListener("click", () => {
+      for (const item of pageItems) selected.add(item.id);
+      updateSelection();
+    });
+    clear.addEventListener("click", () => {
+      selected.clear();
+      updateSelection();
+    });
+    previous.addEventListener("click", () => goToPage(-1));
+    next.addEventListener("click", () => goToPage(1));
+    exportButton.addEventListener("click", downloadSelection);
+    actualSize.addEventListener("click", () => {
+      const enabled = preview.toggleAttribute("data-actual-size");
+      actualSize.setAttribute("aria-pressed", String(enabled));
+    });
+    get("close-preview").addEventListener("click", () => preview.close());
+    preview.addEventListener("close", () => {
+      previewImage.removeAttribute("src");
+      preview.removeAttribute("data-actual-size");
+      actualSize.setAttribute("aria-pressed", "false");
+    });
+    render();
+  </script>
+</body>
+</html>

@@ -1,8 +1,10 @@
 import importlib
 import importlib.util
+import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -106,6 +108,80 @@ class DesktopUiTests(unittest.TestCase):
         self.assertIn("正在停止", self.app.status_label.cget("text"))
         self.assertTrue(self.app.winfo_exists())
 
+    def test_candidate_search_progress_and_wall_leave_details_usable(self):
+        self.app.search_start_button.invoke()
+        settings = self.launch.call_args.args[0]
+        self.assertEqual(self.launch.call_args.kwargs, {"kind": "search"})
+        self.assertEqual(settings["search"], "婴儿奶瓶消毒器")
+        self.assertEqual(settings["category"], "")
+        self.assertEqual(settings["prefix"], "")
+        self.assertEqual(self.app.start_button.cget("state"), "disabled")
+        self.task.read_updates.return_value = [
+            {"type": "progress", "total": 5, "done": 2, "failed": 1, "message": "正在下载缩略图"},
+        ]
+        self.app.poll_task()
+        self.assertIn("正在下载缩略图", self.app.search_counts_label.cget("text"))
+        self.assertAlmostEqual(self.app.search_progress.get(), 0.6)
+        self.assertEqual(self.app.progress.get(), 0)
+        self.app.search_stop_button.invoke()
+        self.task.request_stop.assert_called_once()
+        wall = Path(self.temp.name).resolve() / "候选图片墙.html"
+        wall.touch()
+        self.task.poll.return_value = 0
+        self.task.read_updates.return_value = []
+        self.task.result.return_value = {"status": "stopped", "wall_file": str(wall)}
+        self.app.poll_task()
+        self.assertEqual(self.app.start_button.cget("state"), "normal")
+        self.assertEqual(self.save.call_args.args[0]["last_candidate_wall"], str(wall))
+        with patch.object(self.module.webbrowser, "open", return_value=True) as browser:
+            self.app.open_wall_button.invoke()
+        browser.assert_called_once_with(wall.as_uri())
+
+    def test_candidate_import_uses_the_wall_manifest_and_local_workbook(self):
+        root = Path(self.temp.name).resolve()
+        wall = root / "候选图片墙.html"
+        wall.touch()
+        manifest = root / "candidate_manifest.json"
+        manifest.touch()
+        selection = root / "选中结果.csv"
+        selection.touch()
+        self.app.wall_path = wall
+        import_selection = Mock(return_value=["SP01"])
+        with patch.object(self.module.filedialog, "askopenfilename", return_value=str(selection)), \
+                patch.dict("sys.modules", {"candidate_wall": SimpleNamespace(import_selection=import_selection)}):
+            self.app.import_candidates()
+        import_selection.assert_called_once_with(selection, manifest, root / "选品结果.xlsx")
+        self.assertIn("SP01", self.app.search_import_label.cget("text"))
+
+    def test_search_controls_match_the_details_styles(self):
+        for search_widget, details_widget in (
+            (self.app.search_start_button, self.app.start_button),
+            (self.app.search_stop_button, self.app.stop_button),
+        ):
+            for option in ("fg_color", "hover_color", "text_color_disabled", "border_width", "corner_radius", "height"):
+                with self.subTest(control=search_widget.cget("text"), option=option):
+                    self.assertEqual(search_widget.cget(option), details_widget.cget(option))
+        for option in ("fg_color", "border_width", "corner_radius"):
+            self.assertEqual(self.app.search_log_text.cget(option), self.app.log_text.cget(option))
+
+    def test_saved_wall_populates_ready_search_results(self):
+        root = Path(self.temp.name).resolve()
+        wall = root / "candidates.html"
+        wall.touch()
+        (root / "candidate_manifest.json").write_text(json.dumps({"items": [
+            {"image": "candidates/123.jpg"}, {"image": ""},
+        ]}), encoding="utf-8")
+        with patch.object(self.module, "load_settings", return_value={"last_candidate_wall": str(wall)}):
+            restarted = self.module.DesktopApp()
+        restarted.withdraw()
+        self.addCleanup(self.destroy_app, restarted)
+        self.assertIn("候选 2 个", restarted.search_counts_label.cget("text"))
+        self.assertIn("主图已下载 1/2", restarted.search_counts_label.cget("text"))
+        self.assertEqual(restarted.open_wall_button.cget("state"), "normal")
+        with patch.object(self.module.webbrowser, "open", return_value=True) as browser:
+            restarted.open_wall_button.invoke()
+        browser.assert_called_once_with(wall.as_uri())
+
     def test_provider_switch_preserves_keys_and_models_without_remembering(self):
         self.app.model_var.set("deepseek-custom")
         self.app.provider_var.set("Gemini")
@@ -192,6 +268,32 @@ class DesktopUiTests(unittest.TestCase):
         small.mainloop()
         self.assertGreaterEqual(small.log_text.winfo_height(), 60)
         self.assertLess(small.start_button.winfo_rooty() + small.start_button.winfo_height(), small.winfo_rooty() + small.winfo_height())
+
+    def test_search_button_surfaces_fit_inside_a_compact_window(self):
+        with patch.object(self.module.DesktopApp, "winfo_screenheight", return_value=720), \
+                patch.object(self.module.DesktopApp, "winfo_screenwidth", return_value=1280):
+            small = self.module.DesktopApp()
+        self.addCleanup(self.destroy_app, small)
+        widgets = [small]
+        for widget in widgets:
+            widgets.extend(widget.winfo_children())
+        next(widget for widget in widgets if isinstance(widget, self.module.tk.Button)
+             and widget.cget("text") == "选品搜索").invoke()
+        small.after(200, small.quit)
+        small.mainloop()
+        for button in (small.search_start_button, small.search_stop_button, small.open_wall_button,
+                       small.import_candidates_button):
+            with self.subTest(button=button.cget("text")):
+                canvas = next(child for child in button.winfo_children() if isinstance(child, self.module.tk.Canvas))
+                self.assertTrue(button.winfo_ismapped())
+                self.assertLessEqual(button.winfo_rooty() + button.winfo_height(), small.winfo_rooty() + small.winfo_height())
+                self.assertEqual((canvas.winfo_x(), canvas.winfo_y()), (0, 0))
+                self.assertEqual((canvas.winfo_width(), canvas.winfo_height()), (button.winfo_width(), button.winfo_height()))
+        start = small.search_start_button
+        start.event_generate("<FocusIn>")
+        self.assertGreater(start.cget("border_width"), 0)
+        start.event_generate("<FocusOut>")
+        self.assertEqual(start.cget("border_width"), 0)
 
 
 if __name__ == "__main__":

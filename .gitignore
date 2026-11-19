@@ -12,6 +12,7 @@ htmlcov/
 /dist/
 /build-resources/
 /debug/
+/outputs/
 *.log
 *.jsonl
 
@@ -38,7 +39,8 @@ response-*.json
 /jobs/
 /ProductDetailsDesktop/
 
-# Product input, output and backup workbooks
+# Product data and exports
 *.xlsx
 *.xls
 *.xlsm
+选中结果*.csv

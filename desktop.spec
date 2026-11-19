@@ -7,6 +7,7 @@ root = Path(SPECPATH)
 datas = [(str(root / "build-resources" / "browsers"), "browsers"),
          (str(root / "assets" / "logo.ico"), "assets"),
          (str(root / "assets" / "logo.png"), "assets"),
+         (str(root / "assets" / "candidate_wall.html"), "assets"),
          (str(root / "tests" / "fixtures" / "alibaba_1601683518137.html"), "selftest")]
 datas += collect_data_files("customtkinter")
 # This Python runtime loads a CA sidecar before any HTTPS connection is created.

@@ -28,6 +28,7 @@ ACCENT, ACCENT_HOVER, ACCENT_OFF = "#2563EB", "#1D4ED8", "#A9BEEF"
 OK, ERR = "#059669", "#DC2626"
 FONT = "Microsoft YaHei UI"
 PROGRESS_TRACK = "#E5E9F2"
+INPUT_BORDER, TRACK, TRACK_HOVER, PANEL = "#D6DCE7", "#E4E9F2", "#D6DDEA", "#F6F8FB"
 
 
 class _Controls:
@@ -46,12 +47,12 @@ class _Controls:
         return ctk.CTkFrame(parent, fg_color=CARD, corner_radius=12, border_width=0, border_color=BORDER)
 
     def entry(self, parent, **options):
-        return ctk.CTkEntry(parent, height=self.height, corner_radius=8, fg_color=CARD, border_color=BORDER,
+        return ctk.CTkEntry(parent, height=self.height, corner_radius=10, border_width=1, fg_color=CARD, border_color=INPUT_BORDER,
                             text_color=TEXT, font=self.font(13), **options)
 
     def combo(self, parent, **options):
-        return ctk.CTkComboBox(parent, height=self.height, corner_radius=8, state="readonly", fg_color=CARD,
-                               border_color=BORDER, button_color=BORDER, button_hover_color="#D5DAE3",
+        return ctk.CTkComboBox(parent, height=self.height, corner_radius=10, border_width=1, state="readonly", fg_color=CARD,
+                               border_color=INPUT_BORDER, button_color=INPUT_BORDER, button_hover_color="#C5CDDB",
                                text_color=TEXT, dropdown_fg_color=CARD, dropdown_text_color=TEXT,
                                dropdown_hover_color="#EEF2F9", font=self.font(13), dropdown_font=self.font(13), **options)
 
@@ -59,6 +60,12 @@ class _Controls:
         return ctk.CTkCheckBox(parent, text=label, variable=variable, command=command, font=self.font(13),
                                text_color=TEXT, fg_color=ACCENT, hover_color=ACCENT_HOVER,
                                border_color="#B8C0CE", corner_radius=5, checkbox_width=20, checkbox_height=20)
+
+    def segmented(self, parent, values, **options):
+        return ctk.CTkSegmentedButton(parent, values=values, height=self.height, corner_radius=10, border_width=4,
+                                      font=self.font(13), fg_color=TRACK, selected_color=CARD, selected_hover_color=CARD,
+                                      unselected_color=TRACK, unselected_hover_color=TRACK_HOVER,
+                                      text_color=(TEXT, TEXT), **options)
 
     def button(self, parent, label, command, *, primary=False, width=None):
         if primary:
@@ -84,6 +91,16 @@ class _Controls:
         for tag, color in (("err", ERR), ("ok", OK), ("dim", MUTED)):
             box.tag_config(tag, foreground=color)
         return box
+
+
+def _focusable(widget, ring):
+    """Let a CustomTkinter button take keyboard focus and draw the focus ring inside itself."""
+    border_color = widget.cget("border_color")
+    tk.Frame.configure(widget, takefocus=widget.register(lambda _path: int(widget.cget("state") == "normal")))
+    tk.Frame.bind(widget, "<FocusIn>", lambda _event: widget.configure(border_width=2, border_color=ring))
+    tk.Frame.bind(widget, "<FocusOut>", lambda _event: widget.configure(border_width=0, border_color=border_color))
+    tk.Frame.bind(widget, "<Return>", lambda _event: widget.invoke())
+    tk.Frame.bind(widget, "<space>", lambda _event: widget.invoke())
 
 
 def log_tag(message):
@@ -195,9 +212,10 @@ class DesktopApp(ctk.CTk):
             pass
         controls.text(header, APP_TITLE, 15, True).pack(side="left", padx=title_padding)
         ctk.CTkFrame(self, fg_color=BORDER, height=1, corner_radius=0).pack(fill="x")
-        nav = ctk.CTkFrame(self, fg_color=CARD, corner_radius=0)
-        nav.pack(fill="x")
-        ctk.CTkFrame(self, fg_color=BORDER, height=1, corner_radius=0).pack(fill="x")
+        nav = ctk.CTkFrame(self, fg_color="transparent")
+        nav.pack(fill="x", padx=16 if compact else 28, pady=(8, 0) if compact else (14, 0))
+        track = ctk.CTkFrame(nav, fg_color=TRACK, corner_radius=10)
+        track.pack(side="left")
         content = ctk.CTkFrame(self, fg_color="transparent")
         content.pack(fill="both", expand=True)
         content.grid_columnconfigure(0, weight=1)
@@ -206,34 +224,23 @@ class DesktopApp(ctk.CTk):
 
         def select_tab(name):
             self.active_tab = name
-            for title, (button, marker, panel) in tabs.items():
+            for title, (button, panel) in tabs.items():
                 active = title == name
-                button.configure(fg=ACCENT if active else MUTED, font=(FONT, 10, "bold" if active else "normal"))
-                marker.configure(fg_color=ACCENT if active else CARD)
+                button.configure(fg_color=CARD if active else TRACK, hover_color=CARD if active else TRACK_HOVER,
+                                 font=controls.font(13, active))
                 if active:
                     panel.grid(row=0, column=0, sticky="nsew")
                 else:
                     panel.grid_remove()
 
-        for index, (name, build) in enumerate((("选品搜索", self._build_search), ("图片采集", self._build_images),
-                                                ("详情生成", self._build_details))):
-            tab = ctk.CTkFrame(nav, fg_color=CARD, corner_radius=0)
-            tab.pack(side="left", padx=(14, 0) if index == 0 else 0)
-            button = tk.Button(tab, text=name, width=12, height=1 if compact else 2, bg=CARD, activebackground="#EEF3FF",
-                               activeforeground=ACCENT, bd=0, highlightthickness=0, takefocus=False,
-                               cursor="hand2", command=lambda title=name: select_tab(title))
-            # Windows draws a dotted outline on focused native buttons. Focus the tab container instead.
-            tk.Frame.configure(tab, takefocus=True)
-            button.bind("<FocusIn>", lambda _event, frame=tab: frame.focus_set())
-            tk.Frame.bind(tab, "<FocusIn>", lambda _event, target=button: target.configure(bg=SECONDARY))
-            tk.Frame.bind(tab, "<FocusOut>", lambda _event, target=button: target.configure(bg=CARD))
-            for key in ("<space>", "<Return>"):
-                tk.Frame.bind(tab, key, lambda _event, target=button: target.invoke())
-            button.pack(fill="x")
-            marker = ctk.CTkFrame(tab, width=1, height=2, corner_radius=0)
-            marker.pack(fill="x")
+        pages = (("选品搜索", self._build_search), ("图片采集", self._build_images), ("详情生成", self._build_details))
+        for index, (name, build) in enumerate(pages):
+            button = ctk.CTkButton(track, text=name, width=104, height=controls.height - 2, corner_radius=8,
+                                   border_width=0, text_color=TEXT, command=lambda title=name: select_tab(title))
+            button.pack(side="left", padx=(4, 4 if index == len(pages) - 1 else 0), pady=4)
+            _focusable(button, ACCENT)
             panel = ctk.CTkFrame(content, fg_color="transparent")
-            tabs[name] = (button, marker, panel)
+            tabs[name] = (button, panel)
             build(panel, compact, controls)
 
         self._select_tab = select_tab
@@ -242,46 +249,45 @@ class DesktopApp(ctk.CTk):
     def _build_images(self, panel, compact, controls):
         controls = _Controls(compact=True)
         root = ctk.CTkFrame(panel, fg_color="transparent")
-        root.pack(fill="both", expand=True, padx=16 if compact else 28, pady=10)
+        root.pack(fill="both", expand=True, padx=16 if compact else 28, pady=(6, 10))
         root.grid_columnconfigure(0, weight=1)
-        root.grid_rowconfigure(3, weight=1)
+        root.grid_rowconfigure(6, weight=1)
         gap = 5
 
-        def section(row, title):
+        def section(row, title, *, grow=False):
+            controls.text(root, title, 14, True).grid(row=row, column=0, sticky="w", pady=(2, 3) if row == 0 else (8, 3))
             card = controls.card(root)
-            card.grid(row=row, column=0, sticky="nsew", pady=(0, gap))
+            card.grid(row=row + 1, column=0, sticky="nsew" if grow else "ew")
+            card.grid_columnconfigure(0, minsize=84)
             card.grid_columnconfigure(1, weight=1)
-            controls.text(card, title, 14, True).grid(row=0, column=0, columnspan=3, sticky="w", padx=16, pady=(gap, 2))
+            card.grid_rowconfigure(0, minsize=gap + 3)
             return card
 
         files = section(0, "选品结果表")
         for row, label, key, action in ((1, "输入文件", "input_file", self.choose_image_workbook),
                                          (2, "保存到", "output_dir", self.choose_image_directory)):
-            controls.text(files, label).grid(row=row, column=0, sticky="w", padx=16)
+            controls.text(files, label, color=MUTED).grid(row=row, column=0, sticky="w", padx=(18, 0))
             controls.entry(files, textvariable=self.image_vars[key], state="readonly").grid(row=row, column=1, sticky="ew", pady=2)
             choose = controls.button(files, "选择", action, width=72)
-            choose.grid(row=row, column=2, padx=(8, 16))
+            choose.grid(row=row, column=2, padx=(12, 18))
             self.editable_widgets.append((choose, "normal"))
         self.image_input_summary = controls.text(files, "请选择选品结果表。", 12, color=MUTED, anchor="w", justify="left")
-        self.image_input_summary.grid(row=3, column=0, columnspan=3, sticky="ew", padx=16, pady=(1, gap))
+        self.image_input_summary.grid(row=3, column=0, columnspan=3, sticky="ew", padx=18, pady=(1, gap + 3))
         files.bind("<Configure>", lambda event: self.image_input_summary.configure(wraplength=max(200, event.width - 40)))
 
-        settings = section(1, "采集设置")
-        controls.text(settings, "图片模式").grid(row=1, column=0, sticky="w", padx=16)
+        settings = section(2, "采集设置")
+        controls.text(settings, "图片模式", color=MUTED).grid(row=1, column=0, sticky="w", padx=(18, 0))
         modes = ctk.CTkFrame(settings, fg_color="transparent")
-        modes.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(0, 16), pady=2)
-        selector = ctk.CTkSegmentedButton(modes, values=list(IMAGE_MODES), variable=self.image_vars["mode"],
-                                          command=self._change_image_mode, font=controls.font(12), fg_color=SECONDARY,
-                                          selected_color="#B8D2FA", selected_hover_color="#A9C7F4",
-                                          unselected_color=CARD, unselected_hover_color="#EEF3FC",
-                                          text_color=(TEXT, TEXT), height=controls.height)
+        modes.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(0, 18), pady=2)
+        selector = controls.segmented(modes, list(IMAGE_MODES), variable=self.image_vars["mode"],
+                                      command=self._change_image_mode)
         selector.pack(side="left")
         self.image_mode_hint = controls.text(modes, "", 12, color=MUTED)
         self.image_mode_hint.pack(side="left", padx=12)
         self.editable_widgets.append((selector, "normal"))
         self._change_image_mode(self.image_vars["mode"].get())
 
-        controls.text(settings, "达标条件").grid(row=2, column=0, sticky="w", padx=16)
+        controls.text(settings, "达标条件", color=MUTED).grid(row=2, column=0, sticky="w", padx=(18, 0))
         criteria = ctk.CTkFrame(settings, fg_color="transparent")
         criteria.grid(row=2, column=1, columnspan=2, sticky="w", pady=2)
         controls.text(criteria, "至少").pack(side="left", padx=(0, 6))
@@ -292,65 +298,65 @@ class DesktopApp(ctk.CTk):
             self.editable_widgets.append((entry, "normal"))
 
         toggles = ctk.CTkFrame(settings, fg_color="transparent")
-        toggles.grid(row=3, column=0, columnspan=3, sticky="w", padx=16, pady=(2, gap))
+        toggles.grid(row=3, column=1, columnspan=2, sticky="w", pady=(2, gap + 5))
         for key, label in (("resume", "断点续跑（跳过已采集商品）"), ("show_browser", "显示浏览器（便于手动验证）"),
                            ("save_snapshot", "保存页面快照")):
             checkbox = controls.check(toggles, label, self.image_vars[key])
-            checkbox.pack(side="left", padx=(0, 16))
+            checkbox.pack(side="left", padx=(0, 20))
             self.editable_widgets.append((checkbox, "normal"))
 
-        actions = controls.card(root)
-        actions.grid(row=2, column=0, sticky="ew", pady=(0, gap))
-        actions.grid_columnconfigure(3, weight=1)
-        controls.text(actions, "平台登录", 12, color=MUTED).grid(row=0, column=0, padx=(16, 8))
-        for col, site, title in ((1, "alibaba", "阿里巴巴"), (2, "taobao", "淘宝 / 天猫")):
-            login = controls.button(actions, title, lambda site=site: self.start_login(site, image_panel=True), width=90)
-            login.grid(row=0, column=col, padx=(0, 8), pady=gap)
+        actions = ctk.CTkFrame(root, fg_color="transparent")
+        actions.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        controls.text(actions, "平台登录", color=MUTED).pack(side="left", padx=(2, 10))
+        for site, title, width in (("alibaba", "阿里巴巴", 90), ("taobao", "淘宝 / 天猫", 112)):
+            login = controls.button(actions, title, lambda site=site: self.start_login(site, image_panel=True), width=width)
+            login.pack(side="left", padx=(0, 8))
             self.editable_widgets.append((login, "normal"))
-        self.image_stop_button = controls.button(actions, "停止并保存", self.stop_task)
-        self.image_stop_button.grid(row=0, column=4, padx=(0, 8))
         self.image_start_button = controls.button(actions, "开始采集", self.start_images, primary=True)
-        self.image_start_button.grid(row=0, column=5, padx=(0, 16))
+        self.image_start_button.pack(side="right")
+        self.image_stop_button = controls.button(actions, "停止并保存", self.stop_task)
+        self.image_stop_button.pack(side="right", padx=10)
 
-        run = section(3, "运行状态")
+        run = section(5, "运行状态", grow=True)
         run.grid_rowconfigure(4, weight=1)
         self.image_status_label = controls.text(run, "等待采集", bold=True, color=MUTED, anchor="w", justify="left")
-        self.image_status_label.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16)
+        self.image_status_label.grid(row=1, column=0, columnspan=2, sticky="ew", padx=18)
         self.image_counts_label = controls.text(run, "", 12, color=MUTED)
-        self.image_counts_label.grid(row=1, column=2, sticky="e", padx=(0, 16))
+        self.image_counts_label.grid(row=1, column=2, sticky="e", padx=(0, 18))
         run.bind("<Configure>", lambda event: self.image_status_label.configure(wraplength=max(170, event.width - 330)))
         self.image_progress = controls.progress(run)
-        self.image_progress.grid(row=2, column=0, columnspan=3, sticky="ew", padx=16, pady=(2, gap))
+        self.image_progress.grid(row=2, column=0, columnspan=3, sticky="ew", padx=18, pady=(4, gap))
         self.image_continue_button = controls.button(run, "继续采集", self.continue_login, width=100)
-        self.image_continue_button.grid(row=3, column=0, sticky="w", padx=16, pady=(0, gap))
+        self.image_continue_button.grid(row=3, column=0, sticky="w", padx=18, pady=(0, gap))
         self.image_continue_button.grid_remove()
-        table = ctk.CTkFrame(run, fg_color="transparent")
-        table.grid(row=4, column=0, columnspan=3, sticky="nsew", padx=16, pady=(0, gap))
+        table = ctk.CTkFrame(run, fg_color=PANEL, corner_radius=10)
+        table.grid(row=4, column=0, columnspan=3, sticky="nsew", padx=18, pady=(2, 14))
         table.grid_columnconfigure(0, weight=1)
         table.grid_rowconfigure(0, weight=1)
         style = ttk.Style(self)
-        style.configure("Photos.Treeview", background=CARD, fieldbackground=CARD, foreground=TEXT,
-                        font=(FONT, 10), rowheight=25, borderwidth=0)
-        style.configure("Photos.Treeview.Heading", background=SECONDARY, foreground=TEXT, font=(FONT, 10, "bold"))
+        style.configure("Photos.Treeview", background=PANEL, fieldbackground=PANEL, foreground=TEXT,
+                        font=(FONT, 10), rowheight=28, borderwidth=0, relief="flat")
+        style.configure("Photos.Treeview.Heading", background=PANEL, foreground=MUTED, font=(FONT, 10), relief="flat")
         style.map("Photos.Treeview", background=[("selected", SECONDARY)], foreground=[("selected", TEXT)])
+        style.map("Photos.Treeview.Heading", background=[("active", PANEL)])
         self.image_table = ttk.Treeview(table, columns=("code", "state", "clear", "note"),
                                        show="headings", height=4, style="Photos.Treeview")
         for key, title, width in (("code", "编号", 98), ("state", "状态", 112), ("clear", "清晰图", 80), ("note", "说明", 340)):
             self.image_table.heading(key, text=title, anchor="w")
             self.image_table.column(key, width=width, minwidth=width if key != "note" else 120, stretch=key == "note")
-        for tag, color in (("ok", "#087F5B"), ("warning", "#8A5915"), ("error", ERR), ("working", ACCENT), ("pending", MUTED)):
+        for tag, color in (("ok", "#087F5B"), ("warning", "#8A5915"), ("error", "#B42318"), ("working", ACCENT), ("pending", MUTED)):
             self.image_table.tag_configure(tag, foreground=color)
-        self.image_table.grid(row=0, column=0, sticky="nsew")
+        self.image_table.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=6)
         scroll = ttk.Scrollbar(table, orient="vertical", command=self.image_table.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
+        scroll.grid(row=0, column=1, sticky="ns", pady=6)
         self.image_table.configure(yscrollcommand=scroll.set)
 
         footer = ctk.CTkFrame(root, fg_color="transparent")
-        footer.grid(row=4, column=0, sticky="ew")
+        footer.grid(row=7, column=0, sticky="ew", pady=(8, 0))
         footer.grid_columnconfigure(0, weight=1)
         hint = controls.text(footer, "停止后会保存当前商品。详情生成只处理「已完成」的商品。",
                              12, color=MUTED, anchor="w", justify="left")
-        hint.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        hint.grid(row=0, column=0, sticky="w", padx=(2, 8))
         footer.bind("<Configure>", lambda event: hint.configure(wraplength=max(200, event.width - 280)))
         self.image_open_button = controls.button(footer, "打开图片文件夹", self.open_image_folder, width=126)
         self.image_open_button.grid(row=0, column=1, padx=(0, 8))
@@ -470,107 +476,102 @@ class DesktopApp(ctk.CTk):
 
     def _build_search(self, panel, compact, controls):
         root = ctk.CTkFrame(panel, fg_color="transparent")
-        root.pack(fill="both", expand=True, padx=22, pady=14 if compact else 22)
+        root.pack(fill="both", expand=True, padx=16 if compact else 28, pady=(6, 10) if compact else (8, 14))
         root.grid_columnconfigure(0, weight=1)
-        root.grid_rowconfigure(3, weight=1)
-        inset = 14 if compact else 18
-        split = 8 if compact else 12
-        settings_y_padding = 4 if compact else 8
+        root.grid_rowconfigure(4, weight=1)
+        gap = 2 if compact else 5
+        text = controls.text
 
-        def card(row):
-            frame = controls.card(root)
-            frame.grid(row=row, column=0, sticky="ew", pady=(0, split))
-            return frame
+        def section(row, title):
+            text(root, title, 14, True).grid(row=row, column=0, sticky="w",
+                                             pady=(2, 3) if row == 0 else ((6, 3) if compact else (10, 4)))
+            card = controls.card(root)
+            card.grid(row=row + 1, column=0, sticky="nsew" if row == 3 else "ew")
+            return card
 
-        def label(parent, value, *, bold=False, color=MUTED, size=13, **options):
-            return controls.text(parent, value, size, bold, color, **options)
-
-        def button(parent, text, command, width, *, primary=False):
-            widget = controls.button(parent, text, command, width=width, primary=primary)
-            border_color = widget.cget("border_color")
-            tk.Frame.configure(widget, takefocus=widget.register(lambda _path: int(widget.cget("state") == "normal")))
-            # Draw focus inside the button so the Tk frame cannot clip the CustomTkinter canvas.
-            tk.Frame.bind(widget, "<FocusIn>", lambda _event: widget.configure(
-                border_width=2, border_color="#FFFFFF" if primary else ACCENT))
-            tk.Frame.bind(widget, "<FocusOut>", lambda _event: widget.configure(border_width=0, border_color=border_color))
-            tk.Frame.bind(widget, "<Return>", lambda _event: widget.invoke())
-            tk.Frame.bind(widget, "<space>", lambda _event: widget.invoke())
+        def button(parent, label, command, width, *, primary=False):
+            widget = controls.button(parent, label, command, width=width, primary=primary)
+            _focusable(widget, "#FFFFFF" if primary else ACCENT)
             return widget
 
-        settings = card(0)
-        for column in range(4):
-            settings.grid_columnconfigure(column, weight=1, uniform="search-fields")
-        label(settings, "搜索设置", color=TEXT, bold=True, size=15).grid(
-            row=0, column=0, sticky="w", padx=inset, pady=(inset - 4 + settings_y_padding, 3))
+        settings = section(0, "搜索设置")
+        settings.grid_columnconfigure(0, minsize=100)
+        settings.grid_columnconfigure(1, weight=1, uniform="search-fields")
+        settings.grid_columnconfigure(3, weight=1, uniform="search-fields")
+        settings.grid_rowconfigure(0, minsize=gap + 4)
 
-        def field(title, key, row, column, span=1, *, choices=None, hint=""):
-            container = ctk.CTkFrame(settings, fg_color="transparent")
-            container.grid(row=row, column=column, columnspan=span, sticky="new",
-                           padx=(inset if column == 0 else 0, inset if column + span == 4 else split),
-                           pady=(2 if compact else 6, inset + settings_y_padding if row == 3 else 0))
-            label(container, title, height=20).pack(anchor="w")
-            if choices and key:
-                widget = controls.combo(container, variable=self.search_vars[key], values=list(choices))
+        def field(row, column, title, key, *, span=1, choices=None):
+            text(settings, title, color=MUTED).grid(row=row, column=column, sticky="w",
+                                                    padx=(18, 0) if column == 0 else (16, 8), pady=gap)
+            if choices:
+                widget = controls.combo(settings, variable=self.search_vars[key], values=list(choices))
                 self.editable_widgets.append((widget, "readonly"))
             else:
-                widget = controls.entry(container, textvariable=self.search_vars.get(key))
+                widget = controls.entry(settings, textvariable=self.search_vars.get(key))
                 if key:
                     self.editable_widgets.append((widget, "normal"))
                 else:
                     widget.insert(0, "阿里巴巴国际站")
                     widget.configure(state="readonly")
-            widget.pack(fill="x")
-            if hint:
-                label(container, hint, size=11, height=18).pack(anchor="w")
+            widget.grid(row=row, column=column + 1, columnspan=span, sticky="ew",
+                        padx=(0, 18) if column + span == 3 else 0, pady=gap)
 
-        field("分类名（可选）", "category", 1, 0)
-        field("编号前缀", "prefix", 1, 1, hint="留空时自动生成")
-        field("搜索页数", "pages", 1, 2)
-        field("候选上限", "limit", 1, 3)
-        field("搜索关键词（多个用逗号分隔）", "search", 2, 0, 2)
-        field("平台", None, 2, 2)
-        field("图片模式", "image_mode", 2, 3, choices=IMAGE_MODES)
-        field("标题必含词", "required", 3, 0, 2)
-        field("标题排除词", "excluded", 3, 2, 2)
-
-        actions = card(1)
-        actions.grid_columnconfigure(4, weight=1)
-        login = button(actions, "阿里巴巴登录", lambda: self.start_login("alibaba", search_panel=True), 116)
-        login.grid(row=0, column=0, padx=(inset, 7), pady=inset - 2)
-        self.editable_widgets.append((login, "normal"))
-        self.search_start_button = button(actions, "开始搜索", self.start_search, 90, primary=True)
-        self.search_start_button.grid(row=0, column=1, padx=(0, 7))
-        self.search_stop_button = button(actions, "停止", self.stop_task, 62)
-        self.search_stop_button.configure(state="disabled")
-        self.search_stop_button.grid(row=0, column=2)
-        show_browser = controls.check(actions, "显示浏览器", self.search_browser_var)
-        show_browser.grid(row=0, column=3, padx=(10, 0), sticky="w")
+        field(1, 0, "分类名", "category")
+        field(1, 2, "编号前缀", "prefix")
+        field(2, 0, "搜索关键词", "search", span=3)
+        field(3, 0, "平台", None)
+        field(3, 2, "图片模式", "image_mode", choices=IMAGE_MODES)
+        field(4, 0, "搜索页数", "pages")
+        field(4, 2, "候选上限", "limit")
+        field(5, 0, "标题必含词", "required")
+        field(5, 2, "标题排除词", "excluded")
+        show_browser = controls.check(settings, "显示浏览器（便于手动验证）", self.search_browser_var)
+        show_browser.grid(row=6, column=0, columnspan=2, sticky="w", padx=(18, 0), pady=(gap, gap + 8))
         self.editable_widgets.append((show_browser, "normal"))
-        self.search_status_label = label(actions, "等待搜索", bold=True, anchor="e", justify="right", wraplength=410)
-        self.search_status_label.grid(row=0, column=4, sticky="e", padx=(8, inset))
-        actions.bind("<Configure>", lambda event: self.search_status_label.configure(
-            wraplength=max(140, event.width - 490)))
-        self.search_continue_button = button(actions, "我已完成登录，继续", self.continue_login, 156)
-        self.search_continue_button.grid(row=1, column=0, columnspan=3, sticky="w", padx=inset, pady=(0, inset))
+        text(settings, "多个关键词用逗号分隔 · 分类名可选 · 编号前缀留空时自动生成", 12, color=MUTED).grid(
+            row=6, column=2, columnspan=2, sticky="e", padx=(0, 18), pady=(gap, gap + 8))
+
+        actions = ctk.CTkFrame(root, fg_color="transparent")
+        actions.grid(row=2, column=0, sticky="ew", pady=(8 if compact else 12, 0))
+        text(actions, "平台登录", color=MUTED).pack(side="left", padx=(2, 10))
+        login = button(actions, "阿里巴巴登录", lambda: self.start_login("alibaba", search_panel=True), 116)
+        login.pack(side="left")
+        self.editable_widgets.append((login, "normal"))
+        self.search_start_button = button(actions, "开始搜索", self.start_search, 100, primary=True)
+        self.search_start_button.pack(side="right")
+        self.search_stop_button = button(actions, "停止并保存", self.stop_task, 100)
+        self.search_stop_button.configure(state="disabled")
+        self.search_stop_button.pack(side="right", padx=10)
+
+        run = section(3, "运行状态")
+        run.grid_columnconfigure(0, weight=1)
+        run.grid_rowconfigure(3, weight=1)
+        top = ctk.CTkFrame(run, fg_color="transparent")
+        top.grid(row=0, column=0, sticky="ew", padx=18, pady=(8 if compact else 12, 0))
+        top.grid_columnconfigure(0, weight=1)
+        self.search_status_label = text(top, "等待搜索", 13, True, MUTED, anchor="w", justify="left", wraplength=560)
+        self.search_status_label.grid(row=0, column=0, sticky="w")
+        top.bind("<Configure>", lambda event: self.search_status_label.configure(wraplength=max(200, event.width - 260)))
+        self.search_counts_label = text(top, "", color=MUTED)
+        self.search_counts_label.grid(row=0, column=1, sticky="e")
+        self.search_progress = controls.progress(run)
+        self.search_progress.grid(row=1, column=0, sticky="ew", padx=18, pady=(6, 0))
+        self.search_continue_button = button(run, "我已完成登录，继续", self.continue_login, 156)
+        self.search_continue_button.grid(row=2, column=0, sticky="w", padx=18, pady=(10, 0))
         self.search_continue_button.grid_remove()
+        self.search_log_text = controls.log(run, 60 if compact else 110)
+        self.search_log_text.grid(row=3, column=0, sticky="nsew", padx=18, pady=(8, 12 if compact else 14))
 
-        results = card(2)
-        results.grid_columnconfigure(2, weight=1)
-        self.search_progress = controls.progress(results)
-        self.search_progress.grid(row=0, column=0, columnspan=3, sticky="ew", padx=inset, pady=(inset, 0))
-        self.search_counts_label = label(results, "", anchor="w")
-        self.search_counts_label.grid(row=1, column=0, columnspan=3, sticky="ew", padx=inset)
-        self.open_wall_button = button(results, "打开候选图片墙", self.open_candidate_wall, 135, primary=True)
-        self.open_wall_button.grid(row=2, column=0, padx=(inset, 7), pady=(4, inset))
-        self.import_candidates_button = button(results, "导入选中结果", self.import_candidates, 116)
-        self.import_candidates_button.grid(row=2, column=1, pady=(4, inset))
-        self.search_import_label = label(results, "", size=12, anchor="w", justify="left", wraplength=460)
-        self.search_import_label.grid(row=2, column=2, sticky="ew", padx=(12, inset), pady=(4, inset))
-        results.bind("<Configure>", lambda event: self.search_import_label.configure(
-            wraplength=max(140, event.width - 305)))
-
-        self.search_log_text = controls.log(root, 70 if compact else 125)
-        self.search_log_text.grid(row=3, column=0, sticky="nsew")
+        results = section(5, "选品结果")
+        results.grid_columnconfigure(1, weight=1)
+        self.open_wall_button = button(results, "打开候选图片墙", self.open_candidate_wall, 140, primary=True)
+        self.open_wall_button.grid(row=0, column=0, sticky="w", padx=(18, 12), pady=(12, gap))
+        text(results, "在浏览器里勾选需要的商品并导出 CSV，再点“导入选中结果”，导入后会进入“图片采集”。",
+             12, color=MUTED, anchor="w", justify="left", wraplength=520).grid(row=0, column=1, sticky="w", pady=(12, gap))
+        self.import_candidates_button = button(results, "导入选中结果", self.import_candidates, 140)
+        self.import_candidates_button.grid(row=1, column=0, sticky="w", padx=(18, 12), pady=(gap, 12))
+        self.search_import_label = text(results, "", 12, color=MUTED, anchor="w", justify="left", wraplength=460)
+        self.search_import_label.grid(row=1, column=1, sticky="ew", padx=(0, 18), pady=(gap, 12))
         self._refresh_candidate_actions()
         self._restore_wall_status()
 

@@ -139,9 +139,11 @@ class DesktopUiTests(unittest.TestCase):
 
     def test_candidate_import_uses_the_wall_manifest_and_local_workbook(self):
         root = Path(self.temp.name).resolve()
-        wall = root / "候选图片墙.html"
+        job = root / "jobs" / "test-search"
+        job.mkdir(parents=True)
+        wall = job / "候选图片墙.html"
         wall.touch()
-        manifest = root / "candidate_manifest.json"
+        manifest = job / "candidate_manifest.json"
         manifest.touch()
         selection = root / "选中结果.csv"
         selection.touch()
@@ -150,7 +152,8 @@ class DesktopUiTests(unittest.TestCase):
         with patch.object(self.module.filedialog, "askopenfilename", return_value=str(selection)), \
                 patch.dict("sys.modules", {"candidate_wall": SimpleNamespace(import_selection=import_selection)}):
             self.app.import_candidates()
-        import_selection.assert_called_once_with(selection, manifest, root / "选品结果.xlsx")
+        import_selection.assert_called_once_with(selection, manifest, root / "选品结果.xlsx",
+                                                 task_workbook_path=job / "选品结果.xlsx")
         self.assertIn("SP01", self.app.search_import_label.cget("text"))
 
     def test_search_controls_match_the_details_styles(self):

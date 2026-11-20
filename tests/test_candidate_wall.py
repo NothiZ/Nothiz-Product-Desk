@@ -46,9 +46,16 @@ class CandidateWallTests(unittest.TestCase):
         self.assertTrue((self.folder / items[0]["image"]).is_file())
 
     def test_import_reuses_existing_numbering_and_ignores_edited_titles(self):
-        manifest = self.folder / "candidate_manifest.json"
-        manifest.write_text(json.dumps({"category": "奶瓶消毒器", "prefix": "NP", "image_mode": "常规产品图",
-                                        "items": self.records}), encoding="utf-8")
+        def job(name):
+            folder = self.folder / "jobs" / name
+            folder.mkdir(parents=True)
+            manifest = folder / "candidate_manifest.json"
+            manifest.write_text(json.dumps({"category": "奶瓶消毒器", "prefix": "NP", "image_mode": "常规产品图",
+                                            "items": self.records}), encoding="utf-8")
+            return manifest, folder / "选品结果.xlsx"
+
+        first_manifest, first_result = job("first")
+        second_manifest, second_result = job("second")
         workbook = self.folder / "选品结果.xlsx"
         csv_path = self.folder / "选中结果.csv"
 
@@ -59,9 +66,23 @@ class CandidateWallTests(unittest.TestCase):
                 writer.writerows((item["id"], item["url"], "Edited") for item in records)
 
         export(self.records[:1])
-        self.assertEqual(candidate_wall.import_selection(csv_path, manifest, workbook), ["NP01"])
+        self.assertEqual(candidate_wall.import_selection(csv_path, first_manifest, workbook,
+                                                         task_workbook_path=first_result), ["NP01"])
         export(self.records + self.records[:1])
-        self.assertEqual(candidate_wall.import_selection(csv_path, manifest, workbook), ["NP02"])
+        original_replace = Path.replace
+
+        def blocked_replace(path, target):
+            if target == second_result:
+                raise PermissionError("Workbook in use")
+            return original_replace(path, target)
+
+        with patch.object(Path, "replace", blocked_replace):
+            with self.assertRaises(OSError):
+                candidate_wall.import_selection(csv_path, second_manifest, workbook, task_workbook_path=second_result)
+        self.assertFalse(second_result.exists())
+        for _ in range(2):
+            self.assertEqual(candidate_wall.import_selection(csv_path, second_manifest, workbook,
+                                                             task_workbook_path=second_result), [])
         with workbook.open("rb") as file:
             result = load_workbook(file)
             sheet = result.active
@@ -69,6 +90,12 @@ class CandidateWallTests(unittest.TestCase):
             self.assertEqual(sheet["D3"].value, "=2+2")
             self.assertEqual(sheet["D3"].data_type, "s")
             result.close()
+        for path, code in ((first_result, "NP01"), (second_result, "NP02")):
+            with path.open("rb") as file:
+                result = load_workbook(file)
+                self.assertEqual(result.active.max_row, 2)
+                self.assertEqual(result.active["A2"].value, code)
+                result.close()
 
     def test_import_rejects_a_url_that_was_not_in_the_wall(self):
         manifest = self.folder / "candidate_manifest.json"

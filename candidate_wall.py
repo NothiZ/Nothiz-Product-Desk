@@ -170,7 +170,44 @@ def run_candidate_search(settings, folder, emit, prompt, stop_requested):
             "message": f"{'已停止' if stopped else '搜索完成'} · 候选 {len(items)} 个 · 主图已下载 {ready}/{len(items)}"}
 
 
-def import_selection(csv_path, manifest_path, workbook_path):
+def _result_sheet(workbook):
+    sheet = workbook.active
+    if list(next(sheet.values, ())) == []:
+        sheet.title = "选品结果"
+        sheet.append(_RESULT_HEADERS)
+        sheet.freeze_panes = "A2"
+    if [cell.value for cell in sheet[1]] != _RESULT_HEADERS:
+        raise ValueError("现有选品结果表的格式无法识别")
+    return sheet
+
+
+def _save_result_rows(workbook, sheet, rows, path):
+    if not rows:
+        return
+    for row in rows:
+        sheet.append(row)
+        for cell in sheet[sheet.max_row]:
+            cell.data_type = "s"
+    sheet.auto_filter.ref = sheet.dimensions
+    temporary = path.with_suffix(".tmp")
+    try:
+        workbook.save(temporary)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _update_task_workbook(path, rows):
+    workbook = load_workbook(path) if path.exists() else Workbook()
+    try:
+        sheet = _result_sheet(workbook)
+        existing_codes = {row[0] for row in sheet.iter_rows(min_row=2, values_only=True)}
+        _save_result_rows(workbook, sheet, [row for row in rows if row[0] not in existing_codes], path)
+    finally:
+        workbook.close()
+
+
+def import_selection(csv_path, manifest_path, workbook_path, *, task_workbook_path=None):
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     category = manifest["category"]
     prefix = _resolve_prefix(category, manifest["prefix"])
@@ -189,6 +226,8 @@ def import_selection(csv_path, manifest_path, workbook_path):
             selected[item["id"]] = item
     if not selected:
         raise ValueError("CSV 中没有选中商品")
+    if task_workbook_path is not None and task_workbook_path.resolve() == workbook_path.resolve():
+        raise ValueError("任务选品表与总表必须位于不同文件夹")
 
     # Lock the read/number/save cycle across windows so they cannot allocate the same code.
     with workbook_path.with_suffix(".lock").open("a+b") as lock:
@@ -203,15 +242,8 @@ def import_selection(csv_path, manifest_path, workbook_path):
             raise OSError("另一窗口正在导入选品结果，请稍后重试") from error
 
         workbook = load_workbook(workbook_path) if workbook_path.exists() else Workbook()
-        temporary = workbook_path.with_suffix(".tmp")
         try:
-            sheet = workbook.active
-            if list(next(sheet.values, ())) == []:
-                sheet.title = "选品结果"
-                sheet.append(_RESULT_HEADERS)
-                sheet.freeze_panes = "A2"
-            if [cell.value for cell in sheet[1]] != _RESULT_HEADERS:
-                raise ValueError("现有选品结果表的格式无法识别")
+            sheet = _result_sheet(workbook)
             existing = list(sheet.iter_rows(min_row=2, values_only=True))
             reviewed = {(row[1] or "", str(row[2])) for row in existing}
             last = max((int(match[1]) for row in existing
@@ -223,15 +255,33 @@ def import_selection(csv_path, manifest_path, workbook_path):
                 last += 1
                 code = f"{prefix}{last:02d}"
                 title = ILLEGAL_CHARACTERS_RE.sub("", item["title"])
-                sheet.append([code, category, product_id, title, item["url"], manifest["image_mode"]])
-                for cell in sheet[sheet.max_row]:
-                    cell.data_type = "s"
-                added.append(code)
-            if added:
-                sheet.auto_filter.ref = sheet.dimensions
-                workbook.save(temporary)
-                temporary.replace(workbook_path)
-            return added
+                added.append((code, category, product_id, title, item["url"], manifest["image_mode"]))
+
+            task_codes = set()
+            if task_workbook_path is not None:
+                folder = task_workbook_path.parent.resolve()
+                root = workbook_path.parent.resolve()
+                task_key = str(folder.relative_to(root) if folder.is_relative_to(root) else folder)
+                index_name = "_选品任务"
+                index = workbook[index_name] if index_name in workbook.sheetnames else None
+                if added:
+                    if index is None:
+                        index = workbook.create_sheet(index_name)
+                        index.sheet_state = "hidden"
+                    # Save the source task with each code so a retry can repair a failed task export.
+                    for row in added:
+                        index.append((task_key, row[0]))
+                        index.cell(index.max_row, 1).data_type = "s"
+                if index is not None:
+                    task_codes = {code for key, code in index.values if key == task_key}
+
+            _save_result_rows(workbook, sheet, added, workbook_path)
+            if task_codes:
+                task_rows = [row for row in existing + added if row[0] in task_codes]
+                try:
+                    _update_task_workbook(task_workbook_path, task_rows)
+                except OSError as error:
+                    raise OSError(f"总表记录已保留，任务表写入失败。请关闭任务表后重新导入。\n{error}") from error
+            return [row[0] for row in added]
         finally:
             workbook.close()
-            temporary.unlink(missing_ok=True)

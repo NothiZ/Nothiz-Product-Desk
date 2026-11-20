@@ -15,8 +15,8 @@ import customtkinter as ctk
 from PIL import Image, ImageTk
 
 from desktop_runtime import (
-    APP_TITLE, IMAGE_MODES, default_search_settings, default_settings, launch_job, load_settings,
-    resource_dir, save_settings, user_data_dir, validate_candidate_search, validate_generation,
+    APP_TITLE, IMAGE_MODES, configure_user_data_dir, default_search_settings, default_settings, launch_job, load_settings,
+    needs_user_data_setup, resource_dir, save_settings, user_data_dir, validate_candidate_search, validate_generation,
 )
 
 
@@ -824,6 +824,25 @@ class DesktopApp(ctk.CTk):
         self.destroy()
 
 
+def _choose_first_run_data_dir():
+    parent = tk.Tk()
+    parent.withdraw()
+    try:
+        while True:
+            selected = filedialog.askdirectory(parent=parent, title="选择 ProductDetailsDesktop 的存放位置",
+                                               initialdir=str(Path.home()), mustexist=True)
+            if not selected:
+                return False
+            try:
+                configure_user_data_dir(selected)
+            except (OSError, ValueError) as error:
+                messagebox.showerror("无法使用这个目录", str(error), parent=parent)
+            else:
+                return True
+    finally:
+        parent.destroy()
+
+
 def main():
     multiprocessing.freeze_support()
     parser = argparse.ArgumentParser()
@@ -839,6 +858,13 @@ def main():
             parser.error("--self-test requires --report")
         from desktop_worker import self_test
         return self_test(args.report)
+    try:
+        if needs_user_data_setup() and not _choose_first_run_data_dir():
+            return 0
+        user_data_dir()
+    except (OSError, ValueError) as error:
+        messagebox.showerror("无法打开程序数据目录", str(error))
+        return 1
     DesktopApp().mainloop()
     return 0
 

@@ -8,11 +8,13 @@ import sys
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from tempfile import TemporaryFile
 
 APP_TITLE = "产品详情生成"
 EVENT_PREFIX = "@@PD_EVENT "
 _PUBLIC_SETTINGS = ("provider", "model", "template", "input_file", "output_file", "resume", "show_browser")
 IMAGE_MODES = ("常规产品图", "平铺图")
+_DATA_DIR_NAME = "ProductDetailsDesktop"
 
 
 def default_search_settings():
@@ -28,10 +30,51 @@ def default_settings():
             "candidate_search": default_search_settings(), "last_candidate_wall": ""}
 
 
-def user_data_dir():
+def _default_user_data_dir():
+    local = Path(os.getenv("LOCALAPPDATA") or Path.home()).expanduser().resolve()
+    return local / _DATA_DIR_NAME
+
+
+def _data_location_file():
+    return _default_user_data_dir().with_name(f"{_DATA_DIR_NAME}-location.json")
+
+
+def _configured_user_data_dir():
     override = os.getenv("PRODUCT_DETAILS_DATA_DIR")
-    base = Path(override) if override else Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "ProductDetailsDesktop"
-    base = base.expanduser().resolve()
+    if override:
+        return Path(override).expanduser().resolve()
+    try:
+        saved = json.loads(_data_location_file().read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except ValueError as error:
+        raise ValueError("已保存的数据目录配置无法读取。") from error
+    if not isinstance(saved, str) or not Path(saved).is_absolute():
+        raise ValueError("已保存的数据目录必须是绝对路径。")
+    return Path(saved)
+
+
+def needs_user_data_setup():
+    if _configured_user_data_dir() is not None:
+        return False
+    legacy = _default_user_data_dir()
+    return not legacy.is_dir() or not any(legacy.iterdir())
+
+
+def configure_user_data_dir(parent):
+    parent = Path(parent).expanduser().resolve()
+    if not parent.is_dir():
+        raise ValueError("请选择一个已有文件夹。")
+    destination = parent if parent.name.casefold() == _DATA_DIR_NAME.casefold() else parent / _DATA_DIR_NAME
+    destination.mkdir(exist_ok=True)
+    with TemporaryFile(dir=destination):
+        pass
+    write_json(_data_location_file(), str(destination))
+    return destination
+
+
+def user_data_dir():
+    base = _configured_user_data_dir() or _default_user_data_dir()
     base.mkdir(parents=True, exist_ok=True)
     return base
 
@@ -233,22 +276,23 @@ def launch_job(settings, *, kind="generate", api_key="", site="alibaba"):
     # Migrate before the worker receives its explicit data-directory override.
     for filename in ("alibaba_state.json", "taobao_state.json", "tmall_auth.json"):
         login_state_path(filename)
-    folder = user_data_dir() / "jobs" / uuid.uuid4().hex
+    data_dir = user_data_dir()
+    folder = data_dir / "jobs" / uuid.uuid4().hex
     folder.mkdir(parents=True)
     task_file = folder / "task.json"
     # Never serialize keys into job files or the command line.
-    payload = {"kind": kind, "site": site, "data_dir": str(user_data_dir()), "settings": public_settings}
+    payload = {"kind": kind, "site": site, "data_dir": str(data_dir), "settings": public_settings}
     write_json(task_file, payload)
     command = [sys.executable]
     if not getattr(sys, "frozen", False):
         command.append(str(Path(__file__).with_name("desktop_app.py")))
     command.extend(["--worker", str(task_file)])
     env = os.environ.copy()
-    env.update(PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PRODUCT_DETAILS_DATA_DIR=str(user_data_dir()))
+    env.update(PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PRODUCT_DETAILS_DATA_DIR=str(data_dir))
     provider = settings.get("provider", "deepseek")
     if kind == "generate" and api_key:
         env[f"{provider.upper()}_API_KEY"] = str(api_key).strip()
-    process = subprocess.Popen(command, cwd=str(user_data_dir()), env=env, stdin=subprocess.DEVNULL,
+    process = subprocess.Popen(command, cwd=str(data_dir), env=env, stdin=subprocess.DEVNULL,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     return RunningTask(folder, process)

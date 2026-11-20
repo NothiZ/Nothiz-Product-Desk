@@ -137,6 +137,34 @@ class DesktopUiTests(unittest.TestCase):
             self.app.open_wall_button.invoke()
         browser.assert_called_once_with(wall.as_uri())
 
+    def test_first_run_chooses_parent_before_constructing_desktop_app(self):
+        root = Path(self.temp.name).resolve()
+        destination = root / "工作数据"
+        destination.mkdir()
+        expected = destination / "ProductDetailsDesktop"
+
+        def construct_app():
+            self.assertEqual(self.module.user_data_dir(), expected)
+            return Mock()
+
+        with patch.dict(os.environ, {"LOCALAPPDATA": str(root / "local"), "PRODUCT_DETAILS_DATA_DIR": ""}), \
+                patch("sys.argv", ["desktop_app.py"]), patch.object(self.module.tk, "Tk"), \
+                patch.object(self.module.filedialog, "askdirectory", return_value=str(destination)) as choose, \
+                patch.object(self.module, "DesktopApp", side_effect=construct_app) as window:
+            self.assertEqual(self.module.main(), 0)
+        choose.assert_called_once()
+        window.assert_called_once_with()
+
+    def test_canceling_first_run_does_not_create_a_data_folder(self):
+        local = Path(self.temp.name).resolve() / "fresh-local"
+        with patch.dict(os.environ, {"LOCALAPPDATA": str(local), "PRODUCT_DETAILS_DATA_DIR": ""}), \
+                patch("sys.argv", ["desktop_app.py"]), patch.object(self.module.tk, "Tk"), \
+                patch.object(self.module.filedialog, "askdirectory", return_value=""), \
+                patch.object(self.module, "DesktopApp") as window:
+            self.assertEqual(self.module.main(), 0)
+        window.assert_not_called()
+        self.assertFalse(local.exists())
+
     def test_candidate_import_uses_the_wall_manifest_and_local_workbook(self):
         root = Path(self.temp.name).resolve()
         job = root / "jobs" / "test-search"

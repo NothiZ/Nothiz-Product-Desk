@@ -6,6 +6,7 @@
 使用方法
 1. 解压整个 ProductDetailsDesktop 文件夹，双击 ProductDetailsDesktop.exe。
    请保留旁边的 _internal 文件夹，不要只复制 exe。
+   首次启动时，选择 ProductDetailsDesktop 数据文件夹的存放位置。
 2. 在“输入模板.xlsx”的“链接”列填入商品链接，或选择你现有的 Excel 文件。
 3. 选择输入和输出位置；输出文件不能与输入文件相同。
 4. 选择 DeepSeek 或 Gemini，填入你自己的 API Key，并选择模型与详情模板。
@@ -30,10 +31,10 @@ AI 接口响应慢时，停止可能需要一些时间；请等待窗口提示�
 需要重新生成所有商品时取消勾选，并选择合适的输出文件。
 
 数据位置
-账号登录状态、可选记住的 API Key 和任务日志保存在：
-%LOCALAPPDATA%\ProductDetailsDesktop
-窗口版与命令行均使用此目录保存和读取登录态，不再在项目目录新建两套状态文件。
-输入和输出 Excel 保存在你选择的位置。
+首次启动时选择数据文件夹的上级目录。例如选择 D:\工作数据，程序会在里面创建 ProductDetailsDesktop。
+设置、账号登录状态、任务日志、候选图片、离线图片墙和选品结果.xlsx 都保存在这个数据文件夹里。
+以后启动会自动使用该目录。已有默认数据的用户继续使用 %LOCALAPPDATA%\ProductDetailsDesktop。
+桌面窗口与命令行共用此数据目录。详情生成的输入和输出 Excel 保存在你选择的位置。
 发布包不包含开发者的 API Key、登录态或真实商品表。
 
 范围

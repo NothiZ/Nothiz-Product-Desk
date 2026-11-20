@@ -68,9 +68,41 @@ class DesktopRuntimeTests(unittest.TestCase):
         self.assertEqual(payload["settings"], {"search": "婴儿奶瓶消毒器", "pages": 2, "limit": 60,
                                                "required": "", "excluded": "", "category": "",
                                                "prefix": "AB1", "image_mode": "常规产品图", "show_browser": True})
+        self.assertEqual(task.folder.parent, runtime.user_data_dir() / "jobs")
         for invalid in ({"pages": 0}, {"search": " ,， "}, {"prefix": "中文"}):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 runtime.launch_job({**settings, **invalid}, kind="search")
+
+    def test_selected_data_parent_is_restored_for_settings_and_worker_jobs(self):
+        local = self.root / "local"
+        destination = self.root / "工作数据"
+        destination.mkdir()
+        expected = destination / "ProductDetailsDesktop"
+        with patch.dict(os.environ, {"LOCALAPPDATA": str(local), "PRODUCT_DETAILS_DATA_DIR": ""}), \
+                patch.object(runtime, "resource_dir", return_value=self.root / "empty_resources"):
+            self.assertIsNotNone(getattr(runtime, "configure_user_data_dir", None))
+            self.assertTrue(runtime.needs_user_data_setup())
+            runtime.configure_user_data_dir(destination)
+            self.assertFalse(runtime.needs_user_data_setup())
+            runtime.save_settings(self.settings)
+            self.assertEqual(runtime.user_data_dir(), expected)
+            self.assertTrue((expected / "settings.json").is_file())
+            self.assertEqual(runtime.login_state_path("alibaba_state.json").parent, expected)
+            with patch.object(runtime.subprocess, "Popen"):
+                task = runtime.launch_job(self.settings["candidate_search"], kind="search")
+                login = runtime.launch_job(self.settings, kind="login")
+            self.assertEqual(task.folder.parent, expected / "jobs")
+            self.assertEqual(login.folder.parent, expected / "jobs")
+            self.assertFalse((local / "ProductDetailsDesktop").exists())
+
+    def test_existing_default_data_is_reused_without_setup(self):
+        local = self.root / "local"
+        legacy = local / "ProductDetailsDesktop"
+        legacy.mkdir(parents=True)
+        (legacy / "settings.json").write_text("{}", encoding="utf-8")
+        with patch.dict(os.environ, {"LOCALAPPDATA": str(local), "PRODUCT_DETAILS_DATA_DIR": ""}):
+            self.assertFalse(runtime.needs_user_data_setup())
+            self.assertEqual(runtime.user_data_dir(), legacy)
 
     def test_log_reader_preserves_partial_lines_and_events(self):
         child = MagicMock()

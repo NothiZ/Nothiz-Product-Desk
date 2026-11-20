@@ -44,7 +44,7 @@
 
 前往 **[Releases 下载最新版](https://github.com/NothiZ/Product-Details-Generation-2.0/releases/latest)**，下载 `ProductDetailsDesktop-win-x64.zip`。
 
-1. **完整解压 ZIP**，打开 `ProductDetailsDesktop.exe`。请保留旁边的 `_internal` 文件夹。
+1. **完整解压 ZIP**，打开 `ProductDetailsDesktop.exe`。请保留旁边的 `_internal` 文件夹。首次启动时，选择 `ProductDetailsDesktop` 数据文件夹的存放位置。
 2. 在附带的 `输入模板.xlsx` 中填写商品链接，或选择自己的 `.xlsx` 文件。
 3. 确认输出路径。首次选择输入文件时，程序会提供默认输出路径；输出文件会自动生成，无需提前创建。
 4. 选择 DeepSeek 或 Gemini，填写自己的 API Key、模型名称及详情模板。
@@ -303,9 +303,9 @@ dist/slim-ui/
 
 ## 本地数据与 API Key
 
-窗口版与命令行的登录状态统一位于 `%LOCALAPPDATA%\ProductDetailsDesktop`，文件仍分别为 `alibaba_state.json`、`taobao_state.json` 和 `tmall_auth.json`。窗口版设置、任务日志也保存在该目录；输入输出 Excel 保存在所选位置。
+首次打开桌面窗口时，选择上级目录。比如选择 `D:\工作数据`，程序会在其中创建 `ProductDetailsDesktop`，保存设置、登录状态、任务日志、候选图片、离线图片墙和 `选品结果.xlsx`。以后启动时会自动使用该目录。已有默认数据的用户继续使用 `%LOCALAPPDATA%\ProductDetailsDesktop`。详情生成的输入和输出 Excel 由对应任务选择。
 
-使用默认目录时，项目根目录中的旧登录态会在对应正式文件不存在时迁入；与正式文件完全相同的旧副本会清理，不同内容的旧文件会保留，避免覆盖现有登录态。显式设置 `PRODUCT_DETAILS_DATA_DIR` 时仅使用该目录，不自动导入其他目录的登录态。
+桌面窗口和命令行共用数据目录里的 `alibaba_state.json`、`taobao_state.json` 与 `tmall_auth.json`。项目根目录中的旧登录态会在对应正式文件不存在时迁入。与正式文件完全相同的旧副本会清理，不同内容的旧文件会保留。显式设置 `PRODUCT_DETAILS_DATA_DIR` 时仅使用该目录，不自动导入其他目录的登录态。
 
 勾选“在本机记住 API Key”后，密钥会以明文保存在本地 `settings.json` 中。不要分享包含密钥或登录状态的数据目录。命令行使用的 `.env`、商品表、登录态和构建产物均已加入 `.gitignore`。
 

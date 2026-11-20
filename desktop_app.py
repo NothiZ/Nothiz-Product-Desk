@@ -731,6 +731,7 @@ class DesktopApp(ctk.CTk):
             if wall_path.is_file():
                 self.wall_path = wall_path
                 self.search_import_label.configure(text="")
+                self.append_log(f"候选任务目录：{wall_path.parent}", search=True)
         self._set_busy(False)
         if result.get("output_file"):
             self.output_var.set(result["output_file"])

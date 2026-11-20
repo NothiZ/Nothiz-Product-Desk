@@ -99,6 +99,11 @@ def run_worker(task_file):
 
                     result.update(run_candidate_search(payload["settings"], folder, emit, prompt,
                                                        lambda: (folder / "stop").exists()))
+                elif payload["kind"] == "images":
+                    from image_collection import collect_images
+
+                    result.update(asyncio.run(collect_images(payload["settings"], emit, prompt,
+                                                             lambda: (folder / "stop").exists())))
                 else:
                     raise ValueError("未知任务类型")
             except KeyboardInterrupt:

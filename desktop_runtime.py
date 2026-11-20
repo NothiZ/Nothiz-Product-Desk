@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryFile
@@ -15,6 +16,11 @@ EVENT_PREFIX = "@@PD_EVENT "
 _PUBLIC_SETTINGS = ("provider", "model", "template", "input_file", "output_file", "resume", "show_browser")
 IMAGE_MODES = ("常规产品图", "平铺图")
 _DATA_DIR_NAME = "ProductDetailsDesktop"
+
+
+def default_image_settings(mode=IMAGE_MODES[0]):
+    return {"input_file": "", "output_dir": "", "mode": mode, "min_clear": 2 if mode == IMAGE_MODES[1] else 4,
+            "min_side": 600, "resume": True, "show_browser": True, "save_snapshot": True}
 
 
 def default_search_settings():
@@ -115,6 +121,30 @@ def write_json(path, data):
     temporary.replace(path)
 
 
+@contextmanager
+def workbook_write_lock(path):
+    with path.with_suffix(".lock").open("a+b") as lock:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            raise OSError("另一窗口正在写入此选品表，请稍后重试。") from error
+        yield
+
+
+def save_workbook_atomic(workbook, path):
+    temporary = path.with_suffix(".tmp")
+    try:
+        workbook.save(temporary)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def load_settings():
     settings = default_settings()
     try:
@@ -187,6 +217,33 @@ def validate_candidate_search(settings):
         raise ValueError("请选择有效的图片模式。")
     normalized["show_browser"] = bool(normalized["show_browser"])
     return normalized
+
+
+def validate_image_settings(settings):
+    normalized = {**default_image_settings(settings.get("mode", IMAGE_MODES[0])), **settings}
+    if normalized["mode"] not in IMAGE_MODES:
+        raise ValueError("请选择有效的图片模式。")
+    for key, label, high in (("min_clear", "清晰图张数", 8 if normalized["mode"] == IMAGE_MODES[1] else 5),
+                             ("min_side", "图片最短边", 10000)):
+        try:
+            value = int(str(normalized[key]).strip())
+        except ValueError:
+            value = 0
+        if not 1 <= value <= high:
+            raise ValueError(f"{label}须为 1 到 {high} 的整数。")
+        normalized[key] = value
+    if not str(normalized["input_file"]).strip() or not str(normalized["output_dir"]).strip():
+        raise ValueError("请选择选品结果表和图片保存目录。")
+    source = Path(normalized["input_file"]).expanduser().resolve()
+    output = Path(normalized["output_dir"]).expanduser().resolve()
+    if not source.is_file() or source.suffix.lower() != ".xlsx":
+        raise ValueError("选品结果表不存在，或不是 .xlsx 文件。")
+    if source == (user_data_dir() / "选品结果.xlsx").resolve():
+        raise ValueError("请选择 jobs 下对应任务的选品结果表。总表用于保存历史编号和选品记录。")
+    if output.exists() and not output.is_dir():
+        raise ValueError("图片保存位置须为文件夹。")
+    normalized.update(input_file=str(source), output_dir=str(output))
+    return {key: normalized[key] for key in default_image_settings()}
 
 
 @dataclass
@@ -265,14 +322,18 @@ class RunningTask:
 
 
 def launch_job(settings, *, kind="generate", api_key="", site="alibaba"):
-    if kind not in ("generate", "login", "search"):
+    if kind not in ("generate", "login", "search", "images"):
         raise ValueError("未知任务类型")
     if site not in ("alibaba", "taobao", "tmall"):
         raise ValueError("未知登录站点")
     if kind == "generate":
         settings = validate_generation(settings, api_key)
-    public_settings = (validate_candidate_search(settings) if kind == "search" else
-                       {k: settings.get(k, default_settings()[k]) for k in _PUBLIC_SETTINGS})
+    if kind == "search":
+        public_settings = validate_candidate_search(settings)
+    elif kind == "images":
+        public_settings = validate_image_settings(settings)
+    else:
+        public_settings = {k: settings.get(k, default_settings()[k]) for k in _PUBLIC_SETTINGS}
     # Migrate before the worker receives its explicit data-directory override.
     for filename in ("alibaba_state.json", "taobao_state.json", "tmall_auth.json"):
         login_state_path(filename)

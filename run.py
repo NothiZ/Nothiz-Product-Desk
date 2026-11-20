@@ -42,6 +42,8 @@ def _detect_url_column(df: pd.DataFrame) -> str:
 
 def _load() -> tuple[pd.DataFrame, str]:
     df = pd.read_excel(INPUT_FILE).drop(columns=["图片"], errors="ignore")
+    if "采集状态" in df.columns:
+        df = df.loc[df["采集状态"].astype("string").str.strip().eq("已完成").fillna(False)].reset_index(drop=True)
     url_col = _detect_url_column(df)
     cols = RESULT_COLS + (list(DEBUG_COLS) if ENABLE_DEBUG_COLS else [])
     for c in cols:

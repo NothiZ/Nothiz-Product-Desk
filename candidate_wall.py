@@ -2,7 +2,6 @@
 
 import csv
 import json
-import os
 import re
 from io import BytesIO
 from urllib.parse import urlsplit
@@ -12,13 +11,15 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from PIL import Image, ImageFilter, ImageOps, ImageStat
 
-from desktop_runtime import IMAGE_MODES, resource_dir, write_json
+from desktop_runtime import IMAGE_MODES, resource_dir, save_workbook_atomic, workbook_write_lock, write_json
 from probe_search import collect_search, search_url
 
 _SIZED_IMAGE = re.compile(r"(\.(?:jpe?g|png|webp|avif))_\d+x\d+(?:[a-z0-9]*)\.(?:jpe?g|png|webp|avif)$", re.I)
 _EXTENSIONS = {"JPEG": "jpg", "PNG": "png", "WEBP": "webp", "GIF": "gif", "AVIF": "avif"}
 _PIXEL_LIMIT = 25_000_000
 _BYTE_LIMIT = 16 * 1024 * 1024
+# Initial edge-variance cutoff, to be calibrated against reviewed product photos.
+SHARPNESS_THRESHOLD = 100
 _CSV_HEADERS = ["商品 ID", "链接", "标题"]
 _RESULT_HEADERS = ["商品编号", "分类名", "商品 ID", "标题", "链接", "图片模式"]
 
@@ -38,27 +39,28 @@ def larger_image_url(url):
     return parsed._replace(path=_SIZED_IMAGE.sub(r"\1", parsed.path)).geturl()
 
 
-def inspect_image(data):
+def inspect_image(data, min_side=600):
     with Image.open(BytesIO(data)) as decoded:
         extension = _EXTENSIONS.get(decoded.format)
         if not extension or decoded.width * decoded.height > _PIXEL_LIMIT:
             raise ValueError("图片格式或尺寸不受支持")
         image = ImageOps.exif_transpose(decoded)
         width, height = image.size
-        if min(width, height) < 600:
+        if min(width, height) < min_side:
             return extension, width, height, "分辨率低"
         gray = image.convert("L")
         gray.thumbnail((600, 600), Image.Resampling.LANCZOS)
         edges = gray.filter(ImageFilter.FIND_EDGES)
+        if min(edges.size) <= 2:
+            return extension, width, height, "偏糊"
         interior = edges.crop((1, 1, edges.width - 1, edges.height - 1))
-        # shortcut: Edge variance is provisional, calibrate on reviewed photos before hiding candidates.
-        quality = "清晰" if ImageStat.Stat(interior).var[0] >= 100 else "偏糊"
+        quality = "清晰" if ImageStat.Stat(interior).var[0] >= SHARPNESS_THRESHOLD else "偏糊"
         return extension, width, height, quality
 
 
-def _download_image(session, url, product_id, folder):
+def image_responses(session, url):
     if not _trusted_url(url, ("alicdn.com", "alibaba.com")):
-        return {}
+        return
     large = larger_image_url(url)
     for address in dict.fromkeys((large, url)):
         try:
@@ -70,12 +72,20 @@ def _download_image(session, url, product_id, folder):
                     data.extend(chunk)
                     if len(data) > _BYTE_LIMIT:
                         raise ValueError("图片文件过大")
+            yield data, address
+        except (requests.RequestException, OSError, ValueError):
+            continue
+
+
+def _download_image(session, url, product_id, folder):
+    for data, address in image_responses(session, url):
+        try:
             extension, width, height, quality = inspect_image(data)
         except (requests.RequestException, OSError, ValueError, Image.DecompressionBombError):
             continue
         name = f"{product_id}.{extension}"
         (folder / name).write_bytes(data)
-        if address == url and url != large and quality == "清晰":
+        if address == url and url != larger_image_url(url) and quality == "清晰":
             quality = "待复核"
         return {"image": f"candidates/{name}", "width": width, "height": height, "quality": quality}
     return {}
@@ -170,13 +180,14 @@ def run_candidate_search(settings, folder, emit, prompt, stop_requested):
             "message": f"{'已停止' if stopped else '搜索完成'} · 候选 {len(items)} 个 · 主图已下载 {ready}/{len(items)}"}
 
 
-def _result_sheet(workbook):
+def _result_sheet(workbook, *, task=False):
     sheet = workbook.active
     if list(next(sheet.values, ())) == []:
         sheet.title = "选品结果"
         sheet.append(_RESULT_HEADERS)
         sheet.freeze_panes = "A2"
-    if [cell.value for cell in sheet[1]] != _RESULT_HEADERS:
+    headers = [cell.value for cell in sheet[1]]
+    if (headers[:len(_RESULT_HEADERS)] if task else headers) != _RESULT_HEADERS:
         raise ValueError("现有选品结果表的格式无法识别")
     return sheet
 
@@ -189,22 +200,18 @@ def _save_result_rows(workbook, sheet, rows, path):
         for cell in sheet[sheet.max_row]:
             cell.data_type = "s"
     sheet.auto_filter.ref = sheet.dimensions
-    temporary = path.with_suffix(".tmp")
-    try:
-        workbook.save(temporary)
-        temporary.replace(path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    save_workbook_atomic(workbook, path)
 
 
 def _update_task_workbook(path, rows):
-    workbook = load_workbook(path) if path.exists() else Workbook()
-    try:
-        sheet = _result_sheet(workbook)
-        existing_codes = {row[0] for row in sheet.iter_rows(min_row=2, values_only=True)}
-        _save_result_rows(workbook, sheet, [row for row in rows if row[0] not in existing_codes], path)
-    finally:
-        workbook.close()
+    with workbook_write_lock(path):
+        workbook = load_workbook(path) if path.exists() else Workbook()
+        try:
+            sheet = _result_sheet(workbook, task=True)
+            existing_codes = {row[0] for row in sheet.iter_rows(min_row=2, values_only=True)}
+            _save_result_rows(workbook, sheet, [row for row in rows if row[0] not in existing_codes], path)
+        finally:
+            workbook.close()
 
 
 def import_selection(csv_path, manifest_path, workbook_path, *, task_workbook_path=None):
@@ -230,17 +237,7 @@ def import_selection(csv_path, manifest_path, workbook_path, *, task_workbook_pa
         raise ValueError("任务选品表与总表必须位于不同文件夹")
 
     # Lock the read/number/save cycle across windows so they cannot allocate the same code.
-    with workbook_path.with_suffix(".lock").open("a+b") as lock:
-        try:
-            if os.name == "nt":
-                import msvcrt
-                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as error:
-            raise OSError("另一窗口正在导入选品结果，请稍后重试") from error
-
+    with workbook_write_lock(workbook_path):
         workbook = load_workbook(workbook_path) if workbook_path.exists() else Workbook()
         try:
             sheet = _result_sheet(workbook)

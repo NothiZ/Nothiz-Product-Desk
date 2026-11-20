@@ -206,8 +206,7 @@ def _sku_properties(props) -> dict[str, list[str]]:
     return out
 
 
-def _sku_json(soup) -> dict[str, list[str]]:
-    """Read only the current product's SKU data, excluding recommendations and customization."""
+def product_payloads(soup):
     decoder = json.JSONDecoder()
     for script in soup.find_all("script"):
         text = script.string or ""
@@ -216,9 +215,17 @@ def _sku_json(soup) -> dict[str, list[str]]:
             continue
         try:
             data, _ = decoder.raw_decode(text, match.end())
-            sku = data["globalData"]["product"]["sku"]
+            product = data["globalData"]["product"]
         except (ValueError, KeyError, TypeError):
             continue
+        if isinstance(product, dict):
+            yield product
+
+
+def _sku_json(soup) -> dict[str, list[str]]:
+    """Read only the current product's SKU data, excluding recommendations and customization."""
+    for product in product_payloads(soup):
+        sku = product.get("sku")
         if not isinstance(sku, dict):
             continue
         out = _sku_properties(sku.get("skuAttrs") or sku.get("skuSummaryAttrs") or [])
@@ -504,6 +511,13 @@ class Scraper:
         return ""
 
     async def scrape(self, url: str) -> dict | None:
+        try:
+            return await self.fetch_product(url, self._scrape)
+        except (PWTimeout, TimeoutError):
+            print("页面打开超时")
+            return None
+
+    async def fetch_product(self, url, read_page):
         plat = _platform(url)
         async with self._sems[plat]:
             # Queued pages must not start a browser request after a desktop stop.
@@ -527,21 +541,17 @@ class Scraper:
                 called = True
                 result, error = None, None
                 try:
-                    result = await self._scrape(page, url, plat)
+                    result = await read_page(page, url, plat)
                 except Exception as e:
                     # Scrapling logs callback exceptions, so propagate extraction errors ourselves.
                     error = e
 
-            try:
-                await session.fetch(url, page_setup=setup, page_action=extract)
-                if error:
-                    raise error
-                if not called:
-                    raise RuntimeError("Scrapling 未执行商品提取回调")
-                return result
-            except (PWTimeout, TimeoutError):
-                print("页面打开超时")
-                return None
+            await session.fetch(url, page_setup=setup, page_action=extract)
+            if error:
+                raise error
+            if not called:
+                raise RuntimeError("Scrapling 未执行商品提取回调")
+            return result
 
     async def _scrape(self, page, url: str, plat: str) -> dict | None:
         ali = plat == "alibaba"

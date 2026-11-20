@@ -1,4 +1,4 @@
-"""Chinese desktop window with a separate worker process for search, generation and login."""
+"""Chinese desktop window for product search, image collection, and details generation."""
 import argparse
 import json
 import multiprocessing
@@ -9,14 +9,15 @@ from pathlib import Path
 from queue import Empty, SimpleQueue
 from threading import Thread
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 
 import customtkinter as ctk
 from PIL import Image, ImageTk
 
 from desktop_runtime import (
-    APP_TITLE, IMAGE_MODES, configure_user_data_dir, default_search_settings, default_settings, launch_job, load_settings,
+    APP_TITLE, IMAGE_MODES, configure_user_data_dir, default_image_settings, default_search_settings, default_settings, launch_job, load_settings,
     needs_user_data_setup, resource_dir, save_settings, user_data_dir, validate_candidate_search, validate_generation,
+    validate_image_settings,
 )
 
 
@@ -140,6 +141,7 @@ class DesktopApp(ctk.CTk):
         self.models[self.current_provider] = self.settings.get("model") or self.models[self.current_provider]
         self.task = None
         self.search_task = False
+        self.image_task = False
         self.task_kind = None
         self.finished = None
         self.pending_prompt = None
@@ -162,9 +164,16 @@ class DesktopApp(ctk.CTk):
         self.search_vars = {key: tk.StringVar(self, value=value) for key, value in search_settings.items()
                             if key != "show_browser"}
         self.search_browser_var = tk.BooleanVar(self, value=bool(search_settings["show_browser"]))
+        self.image_vars = {key: (tk.BooleanVar if isinstance(value, bool) else tk.StringVar)(self, value=value)
+                           for key, value in default_image_settings().items()}
+        self.image_rows = []
+        self.image_min_edited = False
+        self.image_vars["min_clear"].trace_add("write", lambda *_: setattr(self, "image_min_edited", True))
         saved_wall = self.settings.get("last_candidate_wall")
         self.wall_path = Path(saved_wall) if isinstance(saved_wall, str) and saved_wall else None
         self._build_window(compact=height < 790)
+        if self.wall_path and (task_workbook := self.wall_path.with_name("选品结果.xlsx")).is_file():
+            self._select_image_workbook(task_workbook)
         self.input_var.trace_add("write", self._refresh_input_status)
         self.protocol("WM_DELETE_WINDOW", self.close_window)
         if startup_error:
@@ -196,6 +205,7 @@ class DesktopApp(ctk.CTk):
         tabs = {}
 
         def select_tab(name):
+            self.active_tab = name
             for title, (button, marker, panel) in tabs.items():
                 active = title == name
                 button.configure(fg=ACCENT if active else MUTED, font=(FONT, 10, "bold" if active else "normal"))
@@ -205,7 +215,8 @@ class DesktopApp(ctk.CTk):
                 else:
                     panel.grid_remove()
 
-        for index, (name, build) in enumerate((("选品搜索", self._build_search), ("详情生成", self._build_details))):
+        for index, (name, build) in enumerate((("选品搜索", self._build_search), ("图片采集", self._build_images),
+                                                ("详情生成", self._build_details))):
             tab = ctk.CTkFrame(nav, fg_color=CARD, corner_radius=0)
             tab.pack(side="left", padx=(14, 0) if index == 0 else 0)
             button = tk.Button(tab, text=name, width=12, height=1 if compact else 2, bg=CARD, activebackground="#EEF3FF",
@@ -225,7 +236,128 @@ class DesktopApp(ctk.CTk):
             tabs[name] = (button, marker, panel)
             build(panel, compact, controls)
 
+        self._select_tab = select_tab
         select_tab("详情生成")
+
+    def _build_images(self, panel, compact, controls):
+        controls = _Controls(compact=True)
+        root = ctk.CTkFrame(panel, fg_color="transparent")
+        root.pack(fill="both", expand=True, padx=16 if compact else 28, pady=10)
+        root.grid_columnconfigure(0, weight=1)
+        root.grid_rowconfigure(3, weight=1)
+        gap = 5
+
+        def section(row, title):
+            card = controls.card(root)
+            card.grid(row=row, column=0, sticky="nsew", pady=(0, gap))
+            card.grid_columnconfigure(1, weight=1)
+            controls.text(card, title, 14, True).grid(row=0, column=0, columnspan=3, sticky="w", padx=16, pady=(gap, 2))
+            return card
+
+        files = section(0, "选品结果表")
+        for row, label, key, action in ((1, "输入文件", "input_file", self.choose_image_workbook),
+                                         (2, "保存到", "output_dir", self.choose_image_directory)):
+            controls.text(files, label).grid(row=row, column=0, sticky="w", padx=16)
+            controls.entry(files, textvariable=self.image_vars[key], state="readonly").grid(row=row, column=1, sticky="ew", pady=2)
+            choose = controls.button(files, "选择", action, width=72)
+            choose.grid(row=row, column=2, padx=(8, 16))
+            self.editable_widgets.append((choose, "normal"))
+        self.image_input_summary = controls.text(files, "请选择选品结果表。", 12, color=MUTED, anchor="w", justify="left")
+        self.image_input_summary.grid(row=3, column=0, columnspan=3, sticky="ew", padx=16, pady=(1, gap))
+        files.bind("<Configure>", lambda event: self.image_input_summary.configure(wraplength=max(200, event.width - 40)))
+
+        settings = section(1, "采集设置")
+        controls.text(settings, "图片模式").grid(row=1, column=0, sticky="w", padx=16)
+        modes = ctk.CTkFrame(settings, fg_color="transparent")
+        modes.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(0, 16), pady=2)
+        selector = ctk.CTkSegmentedButton(modes, values=list(IMAGE_MODES), variable=self.image_vars["mode"],
+                                          command=self._change_image_mode, font=controls.font(12), fg_color=SECONDARY,
+                                          selected_color="#B8D2FA", selected_hover_color="#A9C7F4",
+                                          unselected_color=CARD, unselected_hover_color="#EEF3FC",
+                                          text_color=(TEXT, TEXT), height=controls.height)
+        selector.pack(side="left")
+        self.image_mode_hint = controls.text(modes, "", 12, color=MUTED)
+        self.image_mode_hint.pack(side="left", padx=12)
+        self.editable_widgets.append((selector, "normal"))
+        self._change_image_mode(self.image_vars["mode"].get())
+
+        controls.text(settings, "达标条件").grid(row=2, column=0, sticky="w", padx=16)
+        criteria = ctk.CTkFrame(settings, fg_color="transparent")
+        criteria.grid(row=2, column=1, columnspan=2, sticky="w", pady=2)
+        controls.text(criteria, "至少").pack(side="left", padx=(0, 6))
+        for key, label in (("min_clear", "张清晰图，最短边不小于"), ("min_side", "像素")):
+            entry = controls.entry(criteria, width=68, textvariable=self.image_vars[key], justify="center")
+            entry.pack(side="left")
+            controls.text(criteria, label).pack(side="left", padx=6)
+            self.editable_widgets.append((entry, "normal"))
+
+        toggles = ctk.CTkFrame(settings, fg_color="transparent")
+        toggles.grid(row=3, column=0, columnspan=3, sticky="w", padx=16, pady=(2, gap))
+        for key, label in (("resume", "断点续跑（跳过已采集商品）"), ("show_browser", "显示浏览器（便于手动验证）"),
+                           ("save_snapshot", "保存页面快照")):
+            checkbox = controls.check(toggles, label, self.image_vars[key])
+            checkbox.pack(side="left", padx=(0, 16))
+            self.editable_widgets.append((checkbox, "normal"))
+
+        actions = controls.card(root)
+        actions.grid(row=2, column=0, sticky="ew", pady=(0, gap))
+        actions.grid_columnconfigure(3, weight=1)
+        controls.text(actions, "平台登录", 12, color=MUTED).grid(row=0, column=0, padx=(16, 8))
+        for col, site, title in ((1, "alibaba", "阿里巴巴"), (2, "taobao", "淘宝 / 天猫")):
+            login = controls.button(actions, title, lambda site=site: self.start_login(site, image_panel=True), width=90)
+            login.grid(row=0, column=col, padx=(0, 8), pady=gap)
+            self.editable_widgets.append((login, "normal"))
+        self.image_stop_button = controls.button(actions, "停止并保存", self.stop_task)
+        self.image_stop_button.grid(row=0, column=4, padx=(0, 8))
+        self.image_start_button = controls.button(actions, "开始采集", self.start_images, primary=True)
+        self.image_start_button.grid(row=0, column=5, padx=(0, 16))
+
+        run = section(3, "运行状态")
+        run.grid_rowconfigure(4, weight=1)
+        self.image_status_label = controls.text(run, "等待采集", bold=True, color=MUTED, anchor="w", justify="left")
+        self.image_status_label.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16)
+        self.image_counts_label = controls.text(run, "", 12, color=MUTED)
+        self.image_counts_label.grid(row=1, column=2, sticky="e", padx=(0, 16))
+        run.bind("<Configure>", lambda event: self.image_status_label.configure(wraplength=max(170, event.width - 330)))
+        self.image_progress = controls.progress(run)
+        self.image_progress.grid(row=2, column=0, columnspan=3, sticky="ew", padx=16, pady=(2, gap))
+        self.image_continue_button = controls.button(run, "继续采集", self.continue_login, width=100)
+        self.image_continue_button.grid(row=3, column=0, sticky="w", padx=16, pady=(0, gap))
+        self.image_continue_button.grid_remove()
+        table = ctk.CTkFrame(run, fg_color="transparent")
+        table.grid(row=4, column=0, columnspan=3, sticky="nsew", padx=16, pady=(0, gap))
+        table.grid_columnconfigure(0, weight=1)
+        table.grid_rowconfigure(0, weight=1)
+        style = ttk.Style(self)
+        style.configure("Photos.Treeview", background=CARD, fieldbackground=CARD, foreground=TEXT,
+                        font=(FONT, 10), rowheight=25, borderwidth=0)
+        style.configure("Photos.Treeview.Heading", background=SECONDARY, foreground=TEXT, font=(FONT, 10, "bold"))
+        style.map("Photos.Treeview", background=[("selected", SECONDARY)], foreground=[("selected", TEXT)])
+        self.image_table = ttk.Treeview(table, columns=("code", "state", "clear", "note"),
+                                       show="headings", height=4, style="Photos.Treeview")
+        for key, title, width in (("code", "编号", 98), ("state", "状态", 112), ("clear", "清晰图", 80), ("note", "说明", 340)):
+            self.image_table.heading(key, text=title, anchor="w")
+            self.image_table.column(key, width=width, minwidth=width if key != "note" else 120, stretch=key == "note")
+        for tag, color in (("ok", "#087F5B"), ("warning", "#8A5915"), ("error", ERR), ("working", ACCENT), ("pending", MUTED)):
+            self.image_table.tag_configure(tag, foreground=color)
+        self.image_table.grid(row=0, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(table, orient="vertical", command=self.image_table.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.image_table.configure(yscrollcommand=scroll.set)
+
+        footer = ctk.CTkFrame(root, fg_color="transparent")
+        footer.grid(row=4, column=0, sticky="ew")
+        footer.grid_columnconfigure(0, weight=1)
+        hint = controls.text(footer, "停止后会保存当前商品。详情生成只处理「已完成」的商品。",
+                             12, color=MUTED, anchor="w", justify="left")
+        hint.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        footer.bind("<Configure>", lambda event: hint.configure(wraplength=max(200, event.width - 280)))
+        self.image_open_button = controls.button(footer, "打开图片文件夹", self.open_image_folder, width=126)
+        self.image_open_button.grid(row=0, column=1, padx=(0, 8))
+        self.image_details_button = controls.button(footer, "去生成详情", self.open_image_details, primary=True)
+        self.image_details_button.grid(row=0, column=2)
+        self.image_stop_button.configure(state="disabled")
+        self._refresh_image_actions()
 
     def _build_details(self, panel, compact, controls):
         gap = 2 if compact else 6
@@ -459,8 +591,8 @@ class DesktopApp(ctk.CTk):
             self.search_progress.set(1)
 
     def _status(self, text, tone="run"):
-        label = self.search_status_label if self.search_task else self.status_label
-        label.configure(text=text if self.search_task else f"● {text}",
+        label = self.image_status_label if self.image_task else self.search_status_label if self.search_task else self.status_label
+        label.configure(text=text if self.search_task or self.image_task else f"● {text}",
                         text_color={"idle": MUTED, "run": ACCENT, "ok": OK, "err": ERR}[tone])
 
     def _refresh_input_status(self, *_args):
@@ -474,15 +606,25 @@ class DesktopApp(ctk.CTk):
         else:
             self._status(f"已选择 {Path(filename).name}，点击开始生成", "idle")
 
-    def _counts(self, total, done, failed, message=""):
-        if self.search_task:
+    def _counts(self, total, done, failed, message="", rejected=0):
+        if self.image_task:
+            self._image_counts(total, done, rejected, failed)
+        elif self.search_task:
             text = f"已处理 {done + failed}/{total}  ·  成功 {done}  ·  失败 {failed}" if total else ""
             self.search_counts_label.configure(text=message or text)
         else:
             self.counts_label.configure(text=f"待处理 {total}  ·  成功 {done}  ·  失败 {failed}")
 
+    def _image_counts(self, total, done, rejected, failed):
+        pending = max(0, total - done - rejected - failed)
+        self.image_counts_label.configure(text=f"待处理 {pending}  ·  已采集 {done}  ·  淘汰 {rejected}  ·  失败 {failed}")
+
     def _progress(self, value, maximum):
-        bar = self.search_progress if self.search_task else self.progress
+        bar = self.image_progress if self.image_task else self.search_progress if self.search_task else self.progress
+        self._set_progress(bar, value, maximum)
+
+    @staticmethod
+    def _set_progress(bar, value, maximum):
         fraction = min(1, max(0, value / max(maximum, 1)))
         bar.set(fraction)
         bar.configure(progress_color=ACCENT if fraction > 0 else bar.cget("fg_color"))
@@ -494,6 +636,107 @@ class DesktopApp(ctk.CTk):
             if not self.output_var.get().strip():
                 source = Path(selected)
                 self.output_var.set(str(source.with_name(source.stem + "_output.xlsx")))
+
+    def _change_image_mode(self, mode):
+        if not self.image_min_edited:
+            self.image_vars["min_clear"].set(default_image_settings(mode)["min_clear"])
+            self.image_min_edited = False
+        self.image_mode_hint.configure(text="取最多 8 张候选图，命名为 候选_01 起" if mode == IMAGE_MODES[1]
+                                       else "取前 5 张主图，命名为 主图_01 – 主图_05")
+
+    def choose_image_workbook(self):
+        selected = filedialog.askopenfilename(parent=self, title="选择当前任务的选品结果表",
+                                              filetypes=[("Excel 工作簿", "*.xlsx")])
+        if selected:
+            self._select_image_workbook(Path(selected))
+
+    def choose_image_directory(self):
+        selected = filedialog.askdirectory(parent=self, title="选择图片保存目录", mustexist=True)
+        if selected:
+            self.image_vars["output_dir"].set(selected)
+            self._refresh_image_actions()
+
+    def _select_image_workbook(self, path):
+        self.image_vars["input_file"].set(str(path))
+        self.image_vars["output_dir"].set(str(path.parent / "图片"))
+        self._refresh_image_results()
+        modes = {record["mode"] for record in self.image_rows if record["mode"]}
+        if len(modes) == 1 and (mode := next(iter(modes))) in IMAGE_MODES:
+            self.image_vars["mode"].set(mode)
+            self._change_image_mode(mode)
+
+    def _refresh_image_results(self):
+        from image_collection import read_selection
+
+        self.image_rows = []
+        self.image_table.delete(*self.image_table.get_children())
+        try:
+            self.image_rows = read_selection(Path(self.image_vars["input_file"].get()))
+        except Exception as error:
+            self.image_input_summary.configure(text=f"无法读取选品结果表：{error}", text_color=ERR)
+        else:
+            if self.image_rows:
+                categories = list(dict.fromkeys(row["category"] or "未分类" for row in self.image_rows))
+                codes = [row["code"] for row in self.image_rows]
+                classification = "、".join(categories[:3]) if len(categories) <= 3 else f"{len(categories)} 个分类"
+                number = codes[0] if len(codes) == 1 else f"{codes[0]} – {codes[-1]}"
+                summary = (f"已读取 {len(self.image_rows)} 个商品  ·  分类 {classification}  ·  编号 {number}  ·  "
+                           f"图片保存到 分类\\编号")
+                self.image_input_summary.configure(text=summary, text_color=MUTED)
+            else:
+                self.image_input_summary.configure(text="选品结果表没有可采集的商品。", text_color=MUTED)
+            for row in self.image_rows:
+                self._set_image_row(row)
+        states = [row["status"] for row in self.image_rows]
+        done, rejected = states.count("已完成"), states.count("已淘汰")
+        failed = sum(state not in ("", "待处理", "采集中", "已完成", "已淘汰") for state in states)
+        self._image_counts(len(states), done, rejected, failed)
+        self._set_progress(self.image_progress, done + rejected + failed, len(states))
+        if not self.image_task:
+            self.image_status_label.configure(text="已读取采集结果" if done + rejected + failed else "等待采集", text_color=MUTED)
+        self._refresh_image_actions()
+
+    def _set_image_row(self, row):
+        status = row.get("status") or "待处理"
+        tag = {"已完成": "ok", "已淘汰": "warning", "采集中": "working", "待处理": "pending"}.get(status, "error")
+        key = str(row["row"])
+        values = (row.get("code", ""), f"● {status}", row.get("clear") or "–", row.get("note", ""))
+        if self.image_table.exists(key):
+            self.image_table.item(key, values=values, tags=(tag,))
+        else:
+            self.image_table.insert("", "end", iid=key, values=values, tags=(tag,))
+        if status == "采集中" and self.image_task:
+            self.image_table.see(key)
+            self._status(f"采集中：{row.get('code', '')}（{self.image_table.index(key) + 1} / {len(self.image_rows)}）")
+
+    def _refresh_image_actions(self):
+        busy = bool(self.task)
+        self.image_start_button.configure(state="normal" if self.image_rows and not busy else "disabled",
+                                          fg_color=ACCENT if self.image_rows and not busy else ACCENT_OFF)
+        ready = any(row["status"] == "已完成" for row in self.image_rows) and all(
+            row["status"] not in ("", "待处理", "采集中") for row in self.image_rows)
+        self.image_details_button.configure(state="normal" if ready and not busy else "disabled",
+                                            fg_color=ACCENT if ready and not busy else ACCENT_OFF)
+        output = self.image_vars["output_dir"].get()
+        self.image_open_button.configure(state="normal" if output and Path(output).is_dir() else "disabled")
+
+    def open_image_folder(self):
+        path = Path(self.image_vars["output_dir"].get())
+        try:
+            if os.name == "nt":
+                os.startfile(path)
+            elif not webbrowser.open(path.resolve().as_uri()):
+                raise OSError("无法打开图片文件夹。")
+        except OSError as error:
+            messagebox.showerror("无法打开图片文件夹", str(error), parent=self)
+
+    def open_image_details(self):
+        if self.task or self.image_details_button.cget("state") != "normal":
+            return
+        path = Path(self.image_vars["input_file"].get())
+        self.input_var.set(str(path))
+        self.output_var.set(str(path.with_name(path.stem + "_详情.xlsx")))
+        self._select_tab("详情生成")
 
     def choose_output(self):
         selected = filedialog.asksaveasfilename(parent=self, title="选择输出位置", defaultextension=".xlsx", filetypes=[("Excel 工作簿", "*.xlsx")])
@@ -589,11 +832,21 @@ class DesktopApp(ctk.CTk):
             return
         self._start_task(settings, search_panel=True, kind="search")
 
-    def start_login(self, site, *, search_panel=False):
-        if not self.task:
-            self._start_task(self.collect_settings(), search_panel=search_panel, kind="login", site=site)
+    def start_images(self):
+        if self.task:
+            return
+        try:
+            settings = validate_image_settings({key: variable.get() for key, variable in self.image_vars.items()})
+        except ValueError as error:
+            messagebox.showerror("请检查采集设置", str(error), parent=self)
+            return
+        self._start_task(settings, image_panel=True, kind="images")
 
-    def _start_task(self, settings, *, search_panel=False, **options):
+    def start_login(self, site, *, search_panel=False, image_panel=False):
+        if not self.task:
+            self._start_task(self.collect_settings(), search_panel=search_panel, image_panel=image_panel, kind="login", site=site)
+
+    def _start_task(self, settings, *, search_panel=False, image_panel=False, **options):
         self._save_settings()
         try:
             self.task = launch_job(settings, **options)
@@ -602,11 +855,12 @@ class DesktopApp(ctk.CTk):
             messagebox.showerror("任务启动失败", str(exc), parent=self)
             return
         self.search_task = search_panel
+        self.image_task = image_panel
         self.task_kind = options.get("kind")
         self.finished = None
         self.pending_prompt = None
         self._progress(0, 1)
-        self._counts(0, 0, 0)
+        self._counts(len(self.image_rows) if self.task_kind == "images" else 0, 0, 0)
         self._status("正在启动…")
         self.append_log("任务已启动。")
         self._set_busy(True)
@@ -616,10 +870,19 @@ class DesktopApp(ctk.CTk):
         for widget, idle_state in self.editable_widgets:
             widget.configure(state="disabled" if busy else idle_state)
         self.start_button.configure(state="disabled" if busy else "normal", fg_color=ACCENT_OFF if busy else ACCENT)
-        self.stop_button.configure(state="normal" if busy and not self.search_task else "disabled")
+        self.stop_button.configure(state="normal" if busy and not self.search_task and not self.image_task else "disabled")
         self.search_start_button.configure(state="disabled" if busy else "normal", fg_color=ACCENT_OFF if busy else ACCENT)
         self.search_stop_button.configure(state="normal" if busy and self.search_task else "disabled")
+        self.image_stop_button.configure(state="normal" if busy and self.image_task else "disabled")
         self._refresh_candidate_actions()
+        self._refresh_image_actions()
+
+    def _active_stop_button(self):
+        return self.image_stop_button if self.image_task else self.search_stop_button if self.search_task else self.stop_button
+
+    def _active_continue_button(self):
+        return (self.image_continue_button if self.image_task else
+                self.search_continue_button if self.search_task else self.continue_button)
 
     def append_log(self, message, *, search=None):
         if search is None:
@@ -673,14 +936,17 @@ class DesktopApp(ctk.CTk):
         kind = update.get("type")
         if kind == "log":
             self.append_log(update.get("message", ""))
+        elif kind == "image_row" and self.image_task:
+            self._set_image_row(update)
         elif kind in {"progress", "finished"}:
             total, done, failed = (max(0, int(update.get(key, 0))) for key in ("total", "done", "failed"))
-            self._progress(min(done + failed, total), total)
-            self._counts(total, done, failed, update.get("message", ""))
+            rejected = max(0, int(update.get("rejected", 0)))
+            self._progress(min(done + failed + rejected, total), total)
+            self._counts(total, done, failed, update.get("message", ""), rejected=rejected)
             if kind == "finished":
                 self.finished = update
-            elif not self.closing:
-                stop = self.search_stop_button if self.search_task else self.stop_button
+            elif not self.closing and not self.image_task:
+                stop = self._active_stop_button()
                 if stop.cget("state") != "disabled":
                     self._status("正在搜索…" if self.search_task else "正在处理商品…")
         elif kind == "prompt":
@@ -692,7 +958,7 @@ class DesktopApp(ctk.CTk):
             else:
                 self.pending_prompt = update["id"]
                 self._status(prompt)
-                (self.search_continue_button if self.search_task else self.continue_button).grid()
+                self._active_continue_button().grid()
 
     def continue_login(self):
         if self.task and self.pending_prompt is not None:
@@ -702,7 +968,7 @@ class DesktopApp(ctk.CTk):
                 messagebox.showerror("无法继续登录", str(exc), parent=self)
                 return
             self.pending_prompt = None
-            (self.search_continue_button if self.search_task else self.continue_button).grid_remove()
+            self._active_continue_button().grid_remove()
             self._status("正在确认登录状态…")
 
     def stop_task(self):
@@ -714,9 +980,9 @@ class DesktopApp(ctk.CTk):
             self.closing = False
             messagebox.showerror("停止请求未能发送", str(exc), parent=self)
             return
-        (self.search_stop_button if self.search_task else self.stop_button).configure(state="disabled")
+        self._active_stop_button().configure(state="disabled")
         self.pending_prompt = None
-        (self.search_continue_button if self.search_task else self.continue_button).grid_remove()
+        self._active_continue_button().grid_remove()
         message = ("正在停止，请稍候。" if self.search_task else
                    "正在停止：等待当前商品处理完成并保存，请勿强制关闭。")
         self._status(message)
@@ -725,13 +991,15 @@ class DesktopApp(ctk.CTk):
     def _finish_task(self, result):
         self.task = None
         self.pending_prompt = None
-        (self.search_continue_button if self.search_task else self.continue_button).grid_remove()
+        self._active_continue_button().grid_remove()
         if self.task_kind == "search" and result.get("wall_file"):
             wall_path = Path(result["wall_file"])
             if wall_path.is_file():
                 self.wall_path = wall_path
                 self.search_import_label.configure(text="")
                 self.append_log(f"候选任务目录：{wall_path.parent}", search=True)
+        if self.task_kind == "images":
+            self._refresh_image_results()
         self._set_busy(False)
         if result.get("output_file"):
             self.output_var.set(result["output_file"])
@@ -739,6 +1007,8 @@ class DesktopApp(ctk.CTk):
         labels = {"finished": "任务已完成", "stopped": "已停止并保存", "error": "任务失败"}
         if self.task_kind == "search":
             labels.update(finished="搜索完成", stopped="搜索已停止", error="搜索失败")
+        elif self.task_kind == "images":
+            labels.update(finished="图片采集完成", stopped="已停止并保存", error="图片采集失败")
         label = labels.get(status, "任务结束")
         message = result.get("message") or label
         self._status(label, {"finished": "ok", "stopped": "ok", "error": "err"}.get(status, "idle"))
@@ -747,6 +1017,7 @@ class DesktopApp(ctk.CTk):
             messagebox.showerror("任务失败", message, parent=self)
         self._save_settings()
         self.search_task = False
+        self.image_task = False
         self.task_kind = None
         if self.closing:
             self.destroy()
@@ -800,6 +1071,8 @@ class DesktopApp(ctk.CTk):
             self.append_log("导入检查完成，没有新增商品。", search=True)
         if task_workbook.is_file():
             self.append_log(f"本任务选品表：{task_workbook}", search=True)
+            self._select_image_workbook(task_workbook)
+            self._select_tab("图片采集")
 
     def open_output(self):
         path = Path(self.output_var.get().strip())

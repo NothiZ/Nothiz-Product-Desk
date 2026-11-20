@@ -184,6 +184,51 @@ class DesktopUiTests(unittest.TestCase):
                                                  task_workbook_path=job / "选品结果.xlsx")
         self.assertIn("SP01", self.app.search_import_label.cget("text"))
 
+    def test_image_tab_opens_after_import_and_only_hands_off_finished_rows(self):
+        from openpyxl import Workbook, load_workbook
+
+        root = Path(self.temp.name).resolve()
+        job = root / "jobs" / "photos"
+        job.mkdir(parents=True)
+        wall = job / "candidates.html"
+        wall.touch()
+        wall.with_name("candidate_manifest.json").touch()
+        selection = job / "selected.csv"
+        selection.touch()
+        output = job / "选品结果.xlsx"
+        workbook = Workbook()
+        workbook.active.append(["商品编号", "分类名", "链接", "图片模式", "采集状态"])
+        workbook.active.append(["SP01", "洗发水", "https://www.alibaba.com/product-detail/test_1.html", "常规产品图"])
+        workbook.save(output)
+        workbook.close()
+        self.app.wall_path = wall
+        with patch.object(self.module.filedialog, "askopenfilename", return_value=str(selection)), \
+                patch("candidate_wall.import_selection", return_value=["SP01"]):
+            self.app.import_candidates()
+        self.assertEqual(self.app.active_tab, "图片采集")
+        self.assertEqual(self.app.image_vars["input_file"].get(), str(output))
+        self.assertEqual(self.app.image_vars["output_dir"].get(), str(job / "图片"))
+        self.assertIn("已读取 1 个商品", self.app.image_input_summary.cget("text"))
+        self.assertEqual(self.app.image_details_button.cget("state"), "disabled")
+        self.app._change_image_mode("平铺图")
+        self.assertEqual(self.app.image_vars["min_clear"].get(), "2")
+        self.app.image_vars["min_clear"].set("3")
+        self.app._change_image_mode("常规产品图")
+        self.assertEqual(self.app.image_vars["min_clear"].get(), "3")
+        self.app.start_images()
+        self.assertEqual(self.launch.call_args.kwargs["kind"], "images")
+        self.assertEqual(self.app.start_button.cget("state"), "disabled")
+        self.assertEqual(self.app.search_start_button.cget("state"), "disabled")
+        workbook = load_workbook(output)
+        workbook.active["E2"] = "已完成"
+        workbook.save(output)
+        workbook.close()
+        self.app._finish_task({"status": "finished", "done": 1, "total": 1})
+        self.assertEqual(self.app.image_details_button.cget("state"), "normal")
+        self.app.image_details_button.invoke()
+        self.assertEqual(self.app.active_tab, "详情生成")
+        self.assertEqual(self.app.input_var.get(), str(output))
+
     def test_search_controls_match_the_details_styles(self):
         for search_widget, details_widget in (
             (self.app.search_start_button, self.app.start_button),

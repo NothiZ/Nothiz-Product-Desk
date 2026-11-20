@@ -390,32 +390,34 @@ class DesktopApp(ctk.CTk):
 
     def _build_details(self, panel, compact, controls):
         gap = 2 if compact else 6
+        first_row_padding = (6 if compact else 14, gap)
         text, entry, combo = controls.text, controls.entry, controls.combo
         button, check = controls.button, controls.check
         root = ctk.CTkFrame(panel, fg_color="transparent")
-        root.pack(fill="both", expand=True, padx=16 if compact else 28, pady=(4, 8) if compact else (6, 16))
+        root.pack(fill="both", expand=True, padx=16 if compact else 28, pady=(2, 8) if compact else (6, 16))
         root.grid_columnconfigure(0, weight=1)
         root.grid_rowconfigure(8, weight=1)
 
-        def section(row, title):
+        def section(row, title, *, padding=None):
             text(root, title, 14, True, height=24 if compact else 28).grid(
-                row=row, column=0, sticky="w", pady=(6, 3) if compact else (14, 5))
+                row=row, column=0, sticky="w", pady=padding or ((6, 3) if compact else (14, 5)))
 
         def card(row):
             frame = controls.card(root)
             frame.grid(row=row, column=0, sticky="nsew" if row == 8 else "ew")
             return frame
 
-        section(1, "Excel 文件")
+        section(1, "Excel 文件", padding=(2, 3))
         files = card(2)
         files.grid_columnconfigure(1, weight=1)
         files.grid_columnconfigure(0, minsize=84)
         for row, label, variable, callback in [(0, "输入文件", self.input_var, self.choose_input), (1, "输出文件", self.output_var, self.choose_output)]:
-            text(files, label, color=MUTED).grid(row=row, column=0, sticky="w", padx=(18, 0), pady=gap)
+            padding = first_row_padding if row == 0 else gap
+            text(files, label, color=MUTED).grid(row=row, column=0, sticky="w", padx=(18, 0), pady=padding)
             field = entry(files, textvariable=variable)
-            field.grid(row=row, column=1, sticky="ew", pady=gap)
+            field.grid(row=row, column=1, sticky="ew", pady=padding)
             choose = button(files, "选择", callback)
-            choose.grid(row=row, column=2, padx=(12, 18), pady=gap)
+            choose.grid(row=row, column=2, padx=(12, 18), pady=padding)
             self.editable_widgets.extend([(field, "normal"), (choose, "normal")])
 
         section(3, "生成设置")
@@ -423,12 +425,12 @@ class DesktopApp(ctk.CTk):
         settings.grid_columnconfigure(1, weight=1)
         settings.grid_columnconfigure(3, weight=1)
         settings.grid_columnconfigure(0, minsize=84)
-        text(settings, "AI 服务", color=MUTED).grid(row=0, column=0, sticky="w", padx=(18, 0), pady=gap)
+        text(settings, "AI 服务", color=MUTED).grid(row=0, column=0, sticky="w", padx=(18, 0), pady=first_row_padding)
         provider = combo(settings, values=list(self.PROVIDERS), variable=self.provider_var, command=lambda _v: self.change_provider())
-        provider.grid(row=0, column=1, sticky="ew", pady=gap)
-        text(settings, "模型", color=MUTED).grid(row=0, column=2, padx=(16, 8))
+        provider.grid(row=0, column=1, sticky="ew", pady=first_row_padding)
+        text(settings, "模型", color=MUTED).grid(row=0, column=2, padx=(16, 8), pady=first_row_padding)
         model = entry(settings, textvariable=self.model_var)
-        model.grid(row=0, column=3, sticky="ew", padx=(0, 18), pady=gap)
+        model.grid(row=0, column=3, sticky="ew", padx=(0, 18), pady=first_row_padding)
         text(settings, "API Key", color=MUTED).grid(row=1, column=0, sticky="w", padx=(18, 0), pady=gap)
         key_row = ctk.CTkFrame(settings, fg_color="transparent")
         key_row.grid(row=1, column=1, columnspan=2, sticky="ew", pady=gap)

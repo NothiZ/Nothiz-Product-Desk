@@ -57,6 +57,37 @@ class DesktopUiTests(unittest.TestCase):
         window.assert_called_once_with()
         mainloop.assert_called_once_with()
 
+    def test_search_opens_first_and_only_alibaba_is_available(self):
+        self.assertEqual(self.app.active_tab, "选品搜索")
+        self.assertNotIn("image_mode", self.app.collect_search_settings())
+        self.assertIsInstance(self.app.search_platform, self.module.ctk.CTkComboBox)
+        menu = self.app.search_platform._dropdown_menu
+        self.assertEqual([(menu.entrycget(index, "label").strip(), menu.entrycget(index, "state")) for index in range(3)],
+                         [("阿里巴巴国际站", "normal"), ("淘宝 / 天猫（暂未支持）", "disabled"),
+                          ("亚马逊（暂未支持）", "disabled")])
+
+    def test_tab_intro_changes_with_the_active_page(self):
+        self.assertEqual(self.app.page_intro.cget("text"),
+                         "按分类名和关键词搜索候选商品，在浏览器里勾选后导入，再进入图片采集。首次使用请先登录阿里巴巴。")
+        for name, description in (
+            ("图片采集", "按选品结果表下载商品图片并检查清晰度，清晰图不足的商品会被淘汰，不再生成详情。"),
+            ("详情生成", "读取商品链接表，生成中英文标题与详情；从图片采集进入时，只处理已完成的商品。"),
+        ):
+            self.app._select_tab(name)
+            self.assertEqual(self.app.page_intro.cget("text"), description)
+
+    def test_search_image_button_opens_the_current_task_without_starting_it(self):
+        wall = Path(self.temp.name).resolve() / "jobs" / "photos" / "candidates.html"
+        wall.parent.mkdir(parents=True)
+        workbook = wall.with_name("选品结果.xlsx")
+        workbook.touch()
+        self.app.wall_path = wall
+        with patch.object(self.app, "_select_image_workbook") as choose:
+            self.app.go_image_button.invoke()
+        choose.assert_called_once_with(workbook)
+        self.assertEqual(self.app.active_tab, "图片采集")
+        self.launch.assert_not_called()
+
     def test_input_status_follows_file_changes_without_overwriting_running_status(self):
         source = Path(self.temp.name) / "selected.xlsx"
         source.touch()
@@ -340,6 +371,7 @@ class DesktopUiTests(unittest.TestCase):
         with patch.object(self.module.DesktopApp, "winfo_screenheight", return_value=720), patch.object(self.module.DesktopApp, "winfo_screenwidth", return_value=1280):
             small = self.module.DesktopApp()
         self.addCleanup(self.destroy_app, small)
+        small._select_tab("详情生成")
         small.after(300, small.quit)
         small.mainloop()
         self.assertGreaterEqual(small.log_text.winfo_height(), 60)
@@ -350,15 +382,12 @@ class DesktopUiTests(unittest.TestCase):
                 patch.object(self.module.DesktopApp, "winfo_screenwidth", return_value=1280):
             small = self.module.DesktopApp()
         self.addCleanup(self.destroy_app, small)
-        widgets = [small]
-        for widget in widgets:
-            widgets.extend(widget.winfo_children())
-        next(widget for widget in widgets if isinstance(widget, self.module.tk.Button)
-             and widget.cget("text") == "选品搜索").invoke()
+        self.assertEqual(small.active_tab, "选品搜索")
         small.after(200, small.quit)
         small.mainloop()
+        small.update()
         for button in (small.search_start_button, small.search_stop_button, small.open_wall_button,
-                       small.import_candidates_button):
+                       small.import_candidates_button, small.go_image_button):
             with self.subTest(button=button.cget("text")):
                 canvas = next(child for child in button.winfo_children() if isinstance(child, self.module.tk.Canvas))
                 self.assertTrue(button.winfo_ismapped())
@@ -370,6 +399,11 @@ class DesktopUiTests(unittest.TestCase):
         self.assertGreater(start.cget("border_width"), 0)
         start.event_generate("<FocusOut>")
         self.assertEqual(start.cget("border_width"), 0)
+        small.go_image_button.invoke()
+        small.update()
+        self.assertGreaterEqual(small.image_table.winfo_height(), 40)
+        self.assertLessEqual(small.image_details_button.winfo_rooty() + small.image_details_button.winfo_height(),
+                             small.winfo_rooty() + small.winfo_height())
 
 
 if __name__ == "__main__":

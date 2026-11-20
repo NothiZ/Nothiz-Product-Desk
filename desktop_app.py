@@ -117,6 +117,7 @@ def log_tag(message):
 class DesktopApp(ctk.CTk):
     PROVIDERS = {"DeepSeek": "deepseek", "Gemini": "gemini"}
     TEMPLATES = {"模板 1 · Key: Value 列表": "template1", "模板 2 · Details + Specifications": "template2"}
+    SEARCH_IMPORT_HINT = "选择导出的 CSV，导入后会打开「图片采集」并填好输入文件。"
 
     def __init__(self):
         # Give the app its own Windows taskbar group instead of Python's.
@@ -179,7 +180,7 @@ class DesktopApp(ctk.CTk):
         if isinstance(saved_search, dict):
             search_settings.update({key: saved_search[key] for key in search_settings if key in saved_search})
         self.search_vars = {key: tk.StringVar(self, value=value) for key, value in search_settings.items()
-                            if key != "show_browser"}
+                            if key not in ("show_browser", "image_mode")}
         self.search_browser_var = tk.BooleanVar(self, value=bool(search_settings["show_browser"]))
         self.image_vars = {key: (tk.BooleanVar if isinstance(value, bool) else tk.StringVar)(self, value=value)
                            for key, value in default_image_settings().items()}
@@ -213,17 +214,28 @@ class DesktopApp(ctk.CTk):
         controls.text(header, APP_TITLE, 15, True).pack(side="left", padx=title_padding)
         ctk.CTkFrame(self, fg_color=BORDER, height=1, corner_radius=0).pack(fill="x")
         nav = ctk.CTkFrame(self, fg_color="transparent")
-        nav.pack(fill="x", padx=16 if compact else 28, pady=(8, 0) if compact else (14, 0))
+        inset = 16 if compact else 28
+        nav.pack(fill="x", padx=inset, pady=(8, 0) if compact else (14, 0))
         track = ctk.CTkFrame(nav, fg_color=TRACK, corner_radius=10)
         track.pack(side="left")
+        self.page_intro = controls.text(self, "", 13, color=MUTED, anchor="w", justify="left",
+                                        height=20 if compact else 26)
+        self.page_intro.pack(fill="x", padx=inset, pady=(4, 0) if compact else (10, 0))
+        self.page_intro.bind("<Configure>", lambda event: self.page_intro.configure(wraplength=event.width))
         content = ctk.CTkFrame(self, fg_color="transparent")
         content.pack(fill="both", expand=True)
         content.grid_columnconfigure(0, weight=1)
         content.grid_rowconfigure(0, weight=1)
         tabs = {}
+        descriptions = {
+            "选品搜索": "按分类名和关键词搜索候选商品，在浏览器里勾选后导入，再进入图片采集。首次使用请先登录阿里巴巴。",
+            "图片采集": "按选品结果表下载商品图片并检查清晰度，清晰图不足的商品会被淘汰，不再生成详情。",
+            "详情生成": "读取商品链接表，生成中英文标题与详情；从图片采集进入时，只处理已完成的商品。",
+        }
 
         def select_tab(name):
             self.active_tab = name
+            self.page_intro.configure(text=descriptions[name])
             for title, (button, panel) in tabs.items():
                 active = title == name
                 button.configure(fg_color=CARD if active else TRACK, hover_color=CARD if active else TRACK_HOVER,
@@ -244,18 +256,21 @@ class DesktopApp(ctk.CTk):
             build(panel, compact, controls)
 
         self._select_tab = select_tab
-        select_tab("详情生成")
+        select_tab("选品搜索")
 
     def _build_images(self, panel, compact, controls):
         controls = _Controls(compact=True)
         root = ctk.CTkFrame(panel, fg_color="transparent")
-        root.pack(fill="both", expand=True, padx=16 if compact else 28, pady=(6, 10))
+        root.pack(fill="both", expand=True, padx=16 if compact else 28, pady=(2, 6) if compact else (6, 10))
         root.grid_columnconfigure(0, weight=1)
         root.grid_rowconfigure(6, weight=1)
         gap = 5
+        field_gap = 4 if compact else 5
+        card_padding = 10 if compact else 12
 
-        def section(row, title, *, grow=False):
-            controls.text(root, title, 14, True).grid(row=row, column=0, sticky="w", pady=(2, 3) if row == 0 else (8, 3))
+        def section(row, title, *, grow=False, top=8):
+            controls.text(root, title, 14, True, height=20 if compact else 28).grid(
+                row=row, column=0, sticky="w", pady=(min(top, 6) if compact else top, 3))
             card = controls.card(root)
             card.grid(row=row + 1, column=0, sticky="nsew" if grow else "ew")
             card.grid_columnconfigure(0, minsize=84)
@@ -263,22 +278,25 @@ class DesktopApp(ctk.CTk):
             card.grid_rowconfigure(0, minsize=gap + 3)
             return card
 
-        files = section(0, "选品结果表")
+        files = section(0, "选品结果表", top=2)
+        files.grid_rowconfigure(0, minsize=card_padding)
         for row, label, key, action in ((1, "输入文件", "input_file", self.choose_image_workbook),
                                          (2, "保存到", "output_dir", self.choose_image_directory)):
             controls.text(files, label, color=MUTED).grid(row=row, column=0, sticky="w", padx=(18, 0))
-            controls.entry(files, textvariable=self.image_vars[key], state="readonly").grid(row=row, column=1, sticky="ew", pady=2)
+            controls.entry(files, textvariable=self.image_vars[key], state="readonly").grid(
+                row=row, column=1, sticky="ew", pady=field_gap)
             choose = controls.button(files, "选择", action, width=72)
             choose.grid(row=row, column=2, padx=(12, 18))
             self.editable_widgets.append((choose, "normal"))
         self.image_input_summary = controls.text(files, "请选择选品结果表。", 12, color=MUTED, anchor="w", justify="left")
-        self.image_input_summary.grid(row=3, column=0, columnspan=3, sticky="ew", padx=18, pady=(1, gap + 3))
+        self.image_input_summary.grid(row=3, column=0, columnspan=3, sticky="ew", padx=18, pady=(2, card_padding))
         files.bind("<Configure>", lambda event: self.image_input_summary.configure(wraplength=max(200, event.width - 40)))
 
         settings = section(2, "采集设置")
+        settings.grid_rowconfigure(0, minsize=card_padding)
         controls.text(settings, "图片模式", color=MUTED).grid(row=1, column=0, sticky="w", padx=(18, 0))
         modes = ctk.CTkFrame(settings, fg_color="transparent")
-        modes.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(0, 18), pady=2)
+        modes.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(0, 18), pady=field_gap)
         selector = controls.segmented(modes, list(IMAGE_MODES), variable=self.image_vars["mode"],
                                       command=self._change_image_mode)
         selector.pack(side="left")
@@ -289,7 +307,7 @@ class DesktopApp(ctk.CTk):
 
         controls.text(settings, "达标条件", color=MUTED).grid(row=2, column=0, sticky="w", padx=(18, 0))
         criteria = ctk.CTkFrame(settings, fg_color="transparent")
-        criteria.grid(row=2, column=1, columnspan=2, sticky="w", pady=2)
+        criteria.grid(row=2, column=1, columnspan=2, sticky="w", pady=field_gap)
         controls.text(criteria, "至少").pack(side="left", padx=(0, 6))
         for key, label in (("min_clear", "张清晰图，最短边不小于"), ("min_side", "像素")):
             entry = controls.entry(criteria, width=68, textvariable=self.image_vars[key], justify="center")
@@ -298,7 +316,7 @@ class DesktopApp(ctk.CTk):
             self.editable_widgets.append((entry, "normal"))
 
         toggles = ctk.CTkFrame(settings, fg_color="transparent")
-        toggles.grid(row=3, column=1, columnspan=2, sticky="w", pady=(2, gap + 5))
+        toggles.grid(row=3, column=1, columnspan=2, sticky="w", pady=(field_gap, card_padding))
         for key, label in (("resume", "断点续跑（跳过已采集商品）"), ("show_browser", "显示浏览器（便于手动验证）"),
                            ("save_snapshot", "保存页面快照")):
             checkbox = controls.check(toggles, label, self.image_vars[key])
@@ -306,7 +324,7 @@ class DesktopApp(ctk.CTk):
             self.editable_widgets.append((checkbox, "normal"))
 
         actions = ctk.CTkFrame(root, fg_color="transparent")
-        actions.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        actions.grid(row=4, column=0, sticky="ew", pady=(4 if compact else 8, 0))
         controls.text(actions, "平台登录", color=MUTED).pack(side="left", padx=(2, 10))
         for site, title, width in (("alibaba", "阿里巴巴", 90), ("taobao", "淘宝 / 天猫", 112)):
             login = controls.button(actions, title, lambda site=site: self.start_login(site, image_panel=True), width=width)
@@ -318,6 +336,8 @@ class DesktopApp(ctk.CTk):
         self.image_stop_button.pack(side="right", padx=10)
 
         run = section(5, "运行状态", grow=True)
+        if compact:
+            run.grid_rowconfigure(0, minsize=2)
         run.grid_rowconfigure(4, weight=1)
         self.image_status_label = controls.text(run, "等待采集", bold=True, color=MUTED, anchor="w", justify="left")
         self.image_status_label.grid(row=1, column=0, columnspan=2, sticky="ew", padx=18)
@@ -330,15 +350,18 @@ class DesktopApp(ctk.CTk):
         self.image_continue_button.grid(row=3, column=0, sticky="w", padx=18, pady=(0, gap))
         self.image_continue_button.grid_remove()
         table = ctk.CTkFrame(run, fg_color=PANEL, corner_radius=10)
-        table.grid(row=4, column=0, columnspan=3, sticky="nsew", padx=18, pady=(2, 14))
+        table.grid(row=4, column=0, columnspan=3, sticky="nsew", padx=18, pady=(0, 4) if compact else (2, 14))
         table.grid_columnconfigure(0, weight=1)
         table.grid_rowconfigure(0, weight=1)
         style = ttk.Style(self)
+        style.layout("Photos.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
+        style.layout("Photos.Treeview.Heading", [
+            ("Treeheading.padding", {"sticky": "nswe", "children": [("Treeheading.text", {"sticky": "w"})]}),
+        ])
         style.configure("Photos.Treeview", background=PANEL, fieldbackground=PANEL, foreground=TEXT,
-                        font=(FONT, 10), rowheight=28, borderwidth=0, relief="flat")
-        style.configure("Photos.Treeview.Heading", background=PANEL, foreground=MUTED, font=(FONT, 10), relief="flat")
+                        font=(FONT, 10), rowheight=24 if compact else 28, borderwidth=0, relief="flat")
+        style.configure("Photos.Treeview.Heading", foreground=MUTED, font=(FONT, 10), padding=(4, 4))
         style.map("Photos.Treeview", background=[("selected", SECONDARY)], foreground=[("selected", TEXT)])
-        style.map("Photos.Treeview.Heading", background=[("active", PANEL)])
         self.image_table = ttk.Treeview(table, columns=("code", "state", "clear", "note"),
                                        show="headings", height=4, style="Photos.Treeview")
         for key, title, width in (("code", "编号", 98), ("state", "状态", 112), ("clear", "清晰图", 80), ("note", "说明", 340)):
@@ -346,13 +369,13 @@ class DesktopApp(ctk.CTk):
             self.image_table.column(key, width=width, minwidth=width if key != "note" else 120, stretch=key == "note")
         for tag, color in (("ok", "#087F5B"), ("warning", "#8A5915"), ("error", "#B42318"), ("working", ACCENT), ("pending", MUTED)):
             self.image_table.tag_configure(tag, foreground=color)
-        self.image_table.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=6)
+        self.image_table.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=3 if compact else 6)
         scroll = ttk.Scrollbar(table, orient="vertical", command=self.image_table.yview)
-        scroll.grid(row=0, column=1, sticky="ns", pady=6)
+        scroll.grid(row=0, column=1, sticky="ns", pady=3 if compact else 6)
         self.image_table.configure(yscrollcommand=scroll.set)
 
         footer = ctk.CTkFrame(root, fg_color="transparent")
-        footer.grid(row=7, column=0, sticky="ew", pady=(8, 0))
+        footer.grid(row=7, column=0, sticky="ew", pady=(4 if compact else 8, 0))
         footer.grid_columnconfigure(0, weight=1)
         hint = controls.text(footer, "停止后会保存当前商品。详情生成只处理「已完成」的商品。",
                              12, color=MUTED, anchor="w", justify="left")
@@ -370,21 +393,18 @@ class DesktopApp(ctk.CTk):
         text, entry, combo = controls.text, controls.entry, controls.combo
         button, check = controls.button, controls.check
         root = ctk.CTkFrame(panel, fg_color="transparent")
-        root.pack(fill="both", expand=True, padx=16 if compact else 28, pady=(10, 10) if compact else (20, 16))
+        root.pack(fill="both", expand=True, padx=16 if compact else 28, pady=(4, 8) if compact else (6, 16))
         root.grid_columnconfigure(0, weight=1)
         root.grid_rowconfigure(8, weight=1)
 
         def section(row, title):
-            text(root, title, 14, True).grid(
+            text(root, title, 14, True, height=24 if compact else 28).grid(
                 row=row, column=0, sticky="w", pady=(6, 3) if compact else (14, 5))
 
         def card(row):
             frame = controls.card(root)
             frame.grid(row=row, column=0, sticky="nsew" if row == 8 else "ew")
             return frame
-
-        if not compact:  # 小屏省掉副标题，把空间留给日志
-            text(root, "导入商品链接，生成中英文标题与详情。首次使用请先登录商品平台。", 13, color=MUTED).grid(row=0, column=0, sticky="w")
 
         section(1, "Excel 文件")
         files = card(2)
@@ -465,7 +485,7 @@ class DesktopApp(ctk.CTk):
         self.continue_button.grid(row=2, column=0, sticky="w", padx=18, pady=(10, 0))
         self.continue_button.grid_remove()
         self.log_text = controls.log(logs, 110 if compact else 170)
-        self.log_text.grid(row=3, column=0, sticky="nsew", padx=18, pady=(8, 12 if compact else 18))
+        self.log_text.grid(row=3, column=0, sticky="nsew", padx=18, pady=(4, 6) if compact else (8, 18))
 
         footer = ctk.CTkFrame(root, fg_color="transparent")
         footer.grid(row=9, column=0, sticky="ew", pady=(6 if compact else 14, 0))
@@ -476,15 +496,15 @@ class DesktopApp(ctk.CTk):
 
     def _build_search(self, panel, compact, controls):
         root = ctk.CTkFrame(panel, fg_color="transparent")
-        root.pack(fill="both", expand=True, padx=16 if compact else 28, pady=(6, 10) if compact else (8, 14))
+        root.pack(fill="both", expand=True, padx=16 if compact else 28, pady=(2, 8) if compact else (8, 14))
         root.grid_columnconfigure(0, weight=1)
         root.grid_rowconfigure(4, weight=1)
-        gap = 2 if compact else 5
+        gap = 1 if compact else 5
         text = controls.text
 
         def section(row, title):
-            text(root, title, 14, True).grid(row=row, column=0, sticky="w",
-                                             pady=(2, 3) if row == 0 else ((6, 3) if compact else (10, 4)))
+            text(root, title, 14, True, height=22 if compact else 28).grid(
+                row=row, column=0, sticky="w", pady=(2, 3) if row == 0 else ((6, 3) if compact else (10, 4)))
             card = controls.card(root)
             card.grid(row=row + 1, column=0, sticky="nsew" if row == 3 else "ew")
             return card
@@ -500,36 +520,40 @@ class DesktopApp(ctk.CTk):
         settings.grid_columnconfigure(3, weight=1, uniform="search-fields")
         settings.grid_rowconfigure(0, minsize=gap + 4)
 
-        def field(row, column, title, key, *, span=1, choices=None):
+        def field(row, column, title, key, *, span=1):
             text(settings, title, color=MUTED).grid(row=row, column=column, sticky="w",
                                                     padx=(18, 0) if column == 0 else (16, 8), pady=gap)
-            if choices:
-                widget = controls.combo(settings, variable=self.search_vars[key], values=list(choices))
-                self.editable_widgets.append((widget, "readonly"))
-            else:
-                widget = controls.entry(settings, textvariable=self.search_vars.get(key))
-                if key:
-                    self.editable_widgets.append((widget, "normal"))
-                else:
-                    widget.insert(0, "阿里巴巴国际站")
-                    widget.configure(state="readonly")
+            widget = controls.entry(settings, textvariable=self.search_vars[key])
+            self.editable_widgets.append((widget, "normal"))
             widget.grid(row=row, column=column + 1, columnspan=span, sticky="ew",
                         padx=(0, 18) if column + span == 3 else 0, pady=gap)
 
         field(1, 0, "分类名", "category")
         field(1, 2, "编号前缀", "prefix")
         field(2, 0, "搜索关键词", "search", span=3)
-        field(3, 0, "平台", None)
-        field(3, 2, "图片模式", "image_mode", choices=IMAGE_MODES)
-        field(4, 0, "搜索页数", "pages")
-        field(4, 2, "候选上限", "limit")
-        field(5, 0, "标题必含词", "required")
-        field(5, 2, "标题排除词", "excluded")
+        text(settings, "平台", color=MUTED).grid(row=3, column=0, sticky="w", padx=(18, 0))
+        platforms = ["阿里巴巴国际站", "淘宝 / 天猫（暂未支持）", "亚马逊（暂未支持）"]
+        self.search_platform = controls.combo(settings, values=platforms)
+        self.search_platform.set(platforms[0])
+        # CTkComboBox has no public option for disabling individual entries in its Tk menu.
+        self.search_platform._dropdown_menu.entryconfigure(1, state="disabled")
+        self.search_platform._dropdown_menu.entryconfigure(2, state="disabled")
+        self.search_platform.grid(row=3, column=1, sticky="ew", pady=gap)
+        self.editable_widgets.append((self.search_platform, "readonly"))
+        limits = ctk.CTkFrame(settings, fg_color="transparent")
+        limits.grid(row=3, column=2, columnspan=2, sticky="e", padx=(16, 18), pady=gap)
+        for label, key in (("搜索页数", "pages"), ("候选上限", "limit")):
+            text(limits, label, color=MUTED).pack(side="left", padx=(12, 8))
+            value = controls.entry(limits, width=62, textvariable=self.search_vars[key], justify="center")
+            value.pack(side="left")
+            self.editable_widgets.append((value, "normal"))
+        field(4, 0, "标题必含词", "required")
+        field(4, 2, "标题排除词", "excluded")
         show_browser = controls.check(settings, "显示浏览器（便于手动验证）", self.search_browser_var)
-        show_browser.grid(row=6, column=0, columnspan=2, sticky="w", padx=(18, 0), pady=(gap, gap + 8))
+        show_browser.grid(row=5, column=0, columnspan=2, sticky="w", padx=(18, 0), pady=(gap, gap + 8))
         self.editable_widgets.append((show_browser, "normal"))
         text(settings, "多个关键词用逗号分隔 · 分类名可选 · 编号前缀留空时自动生成", 12, color=MUTED).grid(
-            row=6, column=2, columnspan=2, sticky="e", padx=(0, 18), pady=(gap, gap + 8))
+            row=5, column=2, columnspan=2, sticky="e", padx=(0, 18), pady=(gap, gap + 8))
 
         actions = ctk.CTkFrame(root, fg_color="transparent")
         actions.grid(row=2, column=0, sticky="ew", pady=(8 if compact else 12, 0))
@@ -560,18 +584,28 @@ class DesktopApp(ctk.CTk):
         self.search_continue_button.grid(row=2, column=0, sticky="w", padx=18, pady=(10, 0))
         self.search_continue_button.grid_remove()
         self.search_log_text = controls.log(run, 60 if compact else 110)
-        self.search_log_text.grid(row=3, column=0, sticky="nsew", padx=18, pady=(8, 12 if compact else 14))
+        self.search_log_text.grid(row=3, column=0, sticky="nsew", padx=18, pady=(4, 7) if compact else (8, 14))
 
         results = section(5, "选品结果")
         results.grid_columnconfigure(1, weight=1)
-        self.open_wall_button = button(results, "打开候选图片墙", self.open_candidate_wall, 140, primary=True)
-        self.open_wall_button.grid(row=0, column=0, sticky="w", padx=(18, 12), pady=(12, gap))
-        text(results, "在浏览器里勾选需要的商品并导出 CSV，再点“导入选中结果”，导入后会进入“图片采集”。",
-             12, color=MUTED, anchor="w", justify="left", wraplength=520).grid(row=0, column=1, sticky="w", pady=(12, gap))
-        self.import_candidates_button = button(results, "导入选中结果", self.import_candidates, 140)
-        self.import_candidates_button.grid(row=1, column=0, sticky="w", padx=(18, 12), pady=(gap, 12))
-        self.search_import_label = text(results, "", 12, color=MUTED, anchor="w", justify="left", wraplength=460)
-        self.search_import_label.grid(row=1, column=1, sticky="ew", padx=(0, 18), pady=(gap, 12))
+        result_padding = 8 if compact else 14
+        self.open_wall_button = button(results, "打开候选图片墙", self.open_candidate_wall, 152)
+        self.open_wall_button.grid(row=0, column=0, sticky="w", padx=(18, 12), pady=(result_padding, gap))
+        text(results, "在浏览器里勾选需要的商品，勾完点「导出选中」。",
+             12, color=MUTED, anchor="w", justify="left", wraplength=520).grid(
+                 row=0, column=1, sticky="w", pady=(result_padding, gap))
+        self.import_candidates_button = button(results, "导入选中结果", self.import_candidates, 152, primary=True)
+        self.import_candidates_button.grid(row=1, column=0, sticky="w", padx=(18, 12), pady=(gap, result_padding))
+        self.search_import_label = text(results, self.SEARCH_IMPORT_HINT, 12, color=MUTED, anchor="w",
+                                        justify="left", wraplength=520)
+        self.search_import_label.grid(row=1, column=1, sticky="ew", padx=(0, 18), pady=(gap, result_padding))
+
+        footer = ctk.CTkFrame(root, fg_color="transparent")
+        footer.grid(row=7, column=0, sticky="ew", pady=(4 if compact else 10, 0))
+        text(footer, "停止后会等待当前页面处理完成并保存。", 12, color=MUTED).pack(side="left", padx=(2, 8))
+        self.go_image_button = button(footer, "去采集图片", self.go_to_image_collection, 138)
+        self.go_image_button.pack(side="right")
+        self.editable_widgets.append((self.go_image_button, "normal"))
         self._refresh_candidate_actions()
         self._restore_wall_status()
 
@@ -997,7 +1031,7 @@ class DesktopApp(ctk.CTk):
             wall_path = Path(result["wall_file"])
             if wall_path.is_file():
                 self.wall_path = wall_path
-                self.search_import_label.configure(text="")
+                self.search_import_label.configure(text=self.SEARCH_IMPORT_HINT)
                 self.append_log(f"候选任务目录：{wall_path.parent}", search=True)
         if self.task_kind == "images":
             self._refresh_image_results()
@@ -1027,9 +1061,10 @@ class DesktopApp(ctk.CTk):
         has_wall = bool(self.wall_path and self.wall_path.is_file())
         can_open = has_wall and not self.task
         has_manifest = has_wall and self.wall_path.with_name("candidate_manifest.json").is_file()
-        self.open_wall_button.configure(state="normal" if can_open else "disabled",
-                                        fg_color=ACCENT if can_open else ACCENT_OFF)
-        self.import_candidates_button.configure(state="normal" if has_manifest and not self.task else "disabled")
+        can_import = has_manifest and not self.task
+        self.open_wall_button.configure(state="normal" if can_open else "disabled")
+        self.import_candidates_button.configure(state="normal" if can_import else "disabled",
+                                                fg_color=ACCENT if can_import else ACCENT_OFF)
 
     def open_candidate_wall(self):
         if not self.wall_path or not self.wall_path.is_file():
@@ -1040,6 +1075,15 @@ class DesktopApp(ctk.CTk):
                 raise OSError("无法启动默认浏览器。")
         except OSError as exc:
             messagebox.showerror("无法打开候选图片墙", str(exc), parent=self)
+
+    def go_to_image_collection(self):
+        if self.task:
+            return
+        if self.wall_path:
+            workbook = self.wall_path.with_name("选品结果.xlsx")
+            if workbook.is_file() and workbook != Path(self.image_vars["input_file"].get()):
+                self._select_image_workbook(workbook)
+        self._select_tab("图片采集")
 
     def import_candidates(self):
         if self.task or not self.wall_path:

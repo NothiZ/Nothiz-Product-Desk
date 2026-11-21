@@ -1094,18 +1094,17 @@ class DesktopApp(ctk.CTk):
         try:
             from candidate_wall import import_selection
 
-            workbook = user_data_dir() / "选品结果.xlsx"
-            task_workbook = manifest.with_name(workbook.name)
-            codes = import_selection(Path(selection), manifest, workbook, task_workbook_path=task_workbook)
+            task_workbook = manifest.with_name("选品结果.xlsx")
+            codes = import_selection(Path(selection), manifest, task_workbook)
         except Exception as exc:
             self.append_log(f"导入失败：{exc}", search=True)
             messagebox.showerror("导入失败", str(exc), parent=self)
             return
         if codes:
             number = codes[0] if len(codes) == 1 else f"{codes[0]} – {codes[-1]}"
-            message = f"已导入 {len(codes)} 个商品，编号 {number}"
-            self.search_import_label.configure(text=f"{message}，已写入任务表和总表")
-            self.append_log(f"{message}。总表：{workbook}", search=True)
+            message = f"已导入 {len(codes)} 个商品，编号 {number}，已写入本次任务表"
+            self.search_import_label.configure(text=message)
+            self.append_log(message, search=True)
         else:
             self.search_import_label.configure(text="没有新增商品。")
             self.append_log("导入检查完成，没有新增商品。", search=True)

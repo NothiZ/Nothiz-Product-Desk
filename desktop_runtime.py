@@ -237,8 +237,6 @@ def validate_image_settings(settings):
     output = Path(normalized["output_dir"]).expanduser().resolve()
     if not source.is_file() or source.suffix.lower() != ".xlsx":
         raise ValueError("选品结果表不存在，或不是 .xlsx 文件。")
-    if source == (user_data_dir() / "选品结果.xlsx").resolve():
-        raise ValueError("请选择 jobs 下对应任务的选品结果表。总表用于保存历史编号和选品记录。")
     if output.exists() and not output.is_dir():
         raise ValueError("图片保存位置须为文件夹。")
     normalized.update(input_file=str(source), output_dir=str(output))

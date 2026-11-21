@@ -44,7 +44,7 @@ class CandidateWallTests(unittest.TestCase):
         self.assertEqual((items[0]["width"], items[0]["height"], items[0]["quality"]), (800, 720, "偏糊"))
         self.assertTrue((self.folder / items[0]["image"]).is_file())
 
-    def test_import_reuses_existing_numbering_and_ignores_edited_titles(self):
+    def test_import_numbers_and_deduplicates_within_each_task(self):
         def job(name):
             folder = self.folder / "jobs" / name
             folder.mkdir(parents=True)
@@ -55,7 +55,8 @@ class CandidateWallTests(unittest.TestCase):
 
         first_manifest, first_result = job("first")
         second_manifest, second_result = job("second")
-        workbook = self.folder / "选品结果.xlsx"
+        obsolete_master = self.folder / "选品结果.xlsx"
+        obsolete_master.write_bytes(b"unrelated workbook")
         csv_path = self.folder / "选中结果.csv"
 
         def export(records):
@@ -65,36 +66,35 @@ class CandidateWallTests(unittest.TestCase):
                 writer.writerows((item["id"], item["url"], "Edited") for item in records)
 
         export(self.records[:1])
-        self.assertEqual(candidate_wall.import_selection(csv_path, first_manifest, workbook,
-                                                         task_workbook_path=first_result), ["NP01"])
-        export(self.records + self.records[:1])
-        original_replace = Path.replace
-
-        def blocked_replace(path, target):
-            if target == second_result:
-                raise PermissionError("Workbook in use")
-            return original_replace(path, target)
-
-        with patch.object(Path, "replace", blocked_replace):
-            with self.assertRaises(OSError):
-                candidate_wall.import_selection(csv_path, second_manifest, workbook, task_workbook_path=second_result)
-        self.assertFalse(second_result.exists())
-        for _ in range(2):
-            self.assertEqual(candidate_wall.import_selection(csv_path, second_manifest, workbook,
-                                                             task_workbook_path=second_result), [])
-        with workbook.open("rb") as file:
-            result = load_workbook(file)
-            sheet = result.active
-            self.assertEqual(sheet.max_row, 3)
-            self.assertEqual(sheet["D3"].value, "=2+2")
-            self.assertEqual(sheet["D3"].data_type, "s")
+        self.assertEqual(candidate_wall.import_selection(csv_path, first_manifest, first_result), ["NP01"])
+        result = load_workbook(first_result)
+        try:
+            result.active["F1"] = "采集状态"
+            result.active["F2"] = "已完成"
+            result.save(first_result)
+        finally:
             result.close()
-        for path, code in ((first_result, "NP01"), (second_result, "NP02")):
-            with path.open("rb") as file:
-                result = load_workbook(file)
-                self.assertEqual(result.active.max_row, 2)
-                self.assertEqual(result.active["A2"].value, code)
-                result.close()
+
+        export(self.records + self.records[:1])
+        first_before = first_result.read_bytes()
+        with patch.object(Path, "replace", side_effect=PermissionError("Workbook in use")):
+            with self.assertRaises(PermissionError):
+                candidate_wall.import_selection(csv_path, first_manifest, first_result)
+        self.assertEqual(first_result.read_bytes(), first_before)
+        self.assertEqual(candidate_wall.import_selection(csv_path, first_manifest, first_result), ["NP02"])
+        self.assertEqual(candidate_wall.import_selection(csv_path, first_manifest, first_result), [])
+        result = load_workbook(first_result)
+        try:
+            self.assertEqual(result.active.max_row, 3)
+            self.assertEqual(result.active["F2"].value, "已完成")
+            self.assertEqual(result.active["D3"].value, "=2+2")
+            self.assertEqual(result.active["D3"].data_type, "s")
+        finally:
+            result.close()
+        export(self.records[:1])
+        self.assertEqual(candidate_wall.import_selection(csv_path, second_manifest, second_result), ["NP01"])
+        self.assertTrue(second_result.is_file())
+        self.assertEqual(obsolete_master.read_bytes(), b"unrelated workbook")
 
     def test_import_rejects_a_url_that_was_not_in_the_wall(self):
         manifest = self.folder / "candidate_manifest.json"
@@ -104,8 +104,7 @@ class CandidateWallTests(unittest.TestCase):
         csv_path.write_text("商品 ID,链接,标题\n1601683518137,https://example.com/,Not a candidate\n", encoding="utf-8-sig")
         workbook = self.folder / "选品结果.xlsx"
         with self.assertRaisesRegex(ValueError, "当前候选"):
-            candidate_wall.import_selection(csv_path, manifest, workbook,
-                                            task_workbook_path=self.folder / "jobs" / "test" / workbook.name)
+            candidate_wall.import_selection(csv_path, manifest, workbook)
         self.assertFalse(workbook.exists())
 
     def test_search_filters_titles_and_stops_at_the_run_limit(self):

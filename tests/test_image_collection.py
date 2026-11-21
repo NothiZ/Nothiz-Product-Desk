@@ -1,5 +1,4 @@
 import json
-import os
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -10,7 +9,6 @@ from openpyxl import Workbook, load_workbook
 from PIL import Image, ImageDraw
 
 from image_collection import _has_saved_images, collect_images, extract_images, page_status
-from desktop_runtime import validate_image_settings
 
 
 LINK = "https://www.alibaba.com/product-detail/Bottle_1601928018059.html"
@@ -24,15 +22,6 @@ def gallery(*urls):
 
 
 class ImageCollectionTests(unittest.IsolatedAsyncioTestCase):
-    def test_rejects_the_history_workbook_as_an_image_task(self):
-        with TemporaryDirectory() as directory:
-            root = Path(directory)
-            master = root / "选品结果.xlsx"
-            master.touch()
-            with patch.dict(os.environ, {"PRODUCT_DETAILS_DATA_DIR": str(root)}):
-                with self.assertRaisesRegex(ValueError, "总表"):
-                    validate_image_settings({"input_file": str(master), "output_dir": str(root / "照片")})
-
     def test_extracts_product_gallery_and_filters_external_and_duplicate_images(self):
         first = "https://sc04.alicdn.com/kf/first.jpg"
         second = "https://sc04.alicdn.com/kf/second.jpg"

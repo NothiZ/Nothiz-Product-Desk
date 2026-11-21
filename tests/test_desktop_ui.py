@@ -211,8 +211,7 @@ class DesktopUiTests(unittest.TestCase):
         with patch.object(self.module.filedialog, "askopenfilename", return_value=str(selection)), \
                 patch.dict("sys.modules", {"candidate_wall": SimpleNamespace(import_selection=import_selection)}):
             self.app.import_candidates()
-        import_selection.assert_called_once_with(selection, manifest, root / "选品结果.xlsx",
-                                                 task_workbook_path=job / "选品结果.xlsx")
+        import_selection.assert_called_once_with(selection, manifest, job / "选品结果.xlsx")
         self.assertIn("SP01", self.app.search_import_label.cget("text"))
 
     def test_image_tab_opens_after_import_and_only_hands_off_finished_rows(self):

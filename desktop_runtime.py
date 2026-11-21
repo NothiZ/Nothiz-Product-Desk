@@ -5,9 +5,10 @@ import re
 import shutil
 import subprocess
 import sys
-import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
+from itertools import count
 from pathlib import Path
 from tempfile import TemporaryFile
 
@@ -16,6 +17,7 @@ EVENT_PREFIX = "@@PD_EVENT "
 _PUBLIC_SETTINGS = ("provider", "model", "template", "input_file", "output_file", "resume", "show_browser")
 IMAGE_MODES = ("常规产品图", "平铺图")
 _DATA_DIR_NAME = "ProductDetailsDesktop"
+_JOB_LABELS = {"search": "选品搜索", "images": "图片采集", "generate": "详情生成", "login": "平台登录"}
 
 
 def default_image_settings(mode=IMAGE_MODES[0]):
@@ -322,7 +324,7 @@ class RunningTask:
 
 
 def launch_job(settings, *, kind="generate", api_key="", site="alibaba"):
-    if kind not in ("generate", "login", "search", "images"):
+    if kind not in _JOB_LABELS:
         raise ValueError("未知任务类型")
     if site not in ("alibaba", "taobao", "tmall"):
         raise ValueError("未知登录站点")
@@ -338,8 +340,16 @@ def launch_job(settings, *, kind="generate", api_key="", site="alibaba"):
     for filename in ("alibaba_state.json", "taobao_state.json", "tmall_auth.json"):
         login_state_path(filename)
     data_dir = user_data_dir()
-    folder = data_dir / "jobs" / uuid.uuid4().hex
-    folder.mkdir(parents=True)
+    jobs = data_dir / "jobs"
+    jobs.mkdir(exist_ok=True)
+    stem = f"{datetime.now():%Y%m%d_%H%M%S}_{_JOB_LABELS[kind]}"
+    for sequence in count(1):
+        folder = jobs / (stem if sequence == 1 else f"{stem}_{sequence:02d}")
+        try:
+            folder.mkdir()
+        except FileExistsError:
+            continue
+        break
     task_file = folder / "task.json"
     # Never serialize keys into job files or the command line.
     payload = {"kind": kind, "site": site, "data_dir": str(data_dir), "settings": public_settings}

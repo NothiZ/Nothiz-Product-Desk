@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -72,6 +73,19 @@ class DesktopRuntimeTests(unittest.TestCase):
         for invalid in ({"pages": 0}, {"search": " ,， "}, {"prefix": "中文"}):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 runtime.launch_job({**settings, **invalid}, kind="search")
+
+    def test_job_folders_include_local_time_and_keep_same_second_attempts_separate(self):
+        with patch.object(runtime, "datetime") as clock, patch.object(runtime.subprocess, "Popen"):
+            clock.now.return_value = datetime(2026, 11, 21, 14, 32, 25)
+            first = runtime.launch_job(self.settings["candidate_search"], kind="search")
+            second = runtime.launch_job(self.settings["candidate_search"], kind="search")
+            login = runtime.launch_job(self.settings, kind="login")
+
+        self.assertEqual(
+            [task.folder.name for task in (first, second, login)],
+            ["20261121_143225_选品搜索", "20261121_143225_选品搜索_02", "20261121_143225_平台登录"],
+        )
+        self.assertTrue(all((task.folder / "task.json").is_file() for task in (first, second, login)))
 
     def test_selected_data_parent_is_restored_for_settings_and_worker_jobs(self):
         local = self.root / "local"

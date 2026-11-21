@@ -1,22 +1,14 @@
-from contextlib import chdir, redirect_stdout
-from io import StringIO
-from pathlib import Path
-from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
-
-from openpyxl import load_workbook
 
 import probe_search
 
 
 class SearchProbeTests(unittest.TestCase):
     def test_next_page_click_waits_for_target_page_and_previous_product_ids(self):
-        advance_page = getattr(probe_search, "advance_page", None)
-        self.assertIsNotNone(advance_page, "The probe needs to advance inside the current tab")
         page = Mock()
 
-        advance_page(page, 2, ["1601683518137"])
+        probe_search.advance_page(page, 2, ["1601683518137"])
 
         page.locator.return_value.click.assert_called_once()
         wait_args = page.wait_for_function.call_args.kwargs["arg"]
@@ -41,7 +33,7 @@ class SearchProbeTests(unittest.TestCase):
             "thumb": "https://s.alicdn.com/bottle.jpg",
         }])
 
-    def test_cli_exports_unique_candidates_with_editable_image_modes(self):
+    def test_collect_search_passes_each_page_to_the_caller(self):
         first = '<a href="/product-detail/Bottle_1601683518137.html" title="=2+2"><img src="https://s.alicdn.com/bottle.jpg"></a>'
         second = '<a href="/product-detail/Bottle_1600000000001.html" title="奶瓶消毒器"></a>'
         page = Mock(url="https://www.alibaba.com/search/page?SearchText=test")
@@ -52,34 +44,15 @@ class SearchProbeTests(unittest.TestCase):
             page_action(page)
             return Mock(status=200)
 
-        argv = ["probe_search.py", "婴儿奶瓶消毒器", "--image-mode", "平铺图"]
-        with TemporaryDirectory() as directory, chdir(directory), redirect_stdout(StringIO()), \
-                patch("sys.argv", argv), patch("desktop_runtime.configure_browser_path"), \
-                patch("desktop_runtime.login_state_path", return_value=Path("unused_state.json")), \
+        record = Mock()
+        with patch("desktop_runtime.configure_browser_path"), \
+                patch("desktop_runtime.login_state_path", return_value=Mock(is_file=lambda: False)), \
                 patch("scrapling.fetchers.StealthySession") as session:
             session.return_value.__enter__.return_value.fetch.side_effect = fetch
-            try:
-                probe_search.main()
-            except SystemExit as error:
-                self.fail(f"Candidate export exited with {error.code}")
-            outputs = list(Path("debug").glob("*/候选商品.xlsx"))
-            self.assertEqual(len(outputs), 1)
-            workbook = load_workbook(outputs[0])
-            self.addCleanup(workbook.close)
-            sheet = workbook["候选商品"]
-            self.assertEqual([cell.value for cell in sheet[1]],
-                             ["选品结果", "图片模式", "商品 ID", "标题", "链接", "缩略图链接"])
-            self.assertEqual(sheet.max_row, 3)
-            self.assertEqual([sheet[f"C{row}"].value for row in (2, 3)], ["1601683518137", "1600000000001"])
-            self.assertEqual(sheet["C2"].number_format, "@")
-            self.assertEqual((sheet["A2"].value, sheet["B2"].value), ("待选", "平铺图"))
-            self.assertEqual((sheet["D2"].value, sheet["D2"].data_type), ("=2+2", "s"))
-            self.assertEqual(sheet["E2"].hyperlink.target, sheet["E2"].value)
-            self.assertEqual(sheet["F2"].hyperlink.target, "https://s.alicdn.com/bottle.jpg")
-            self.assertIsNone(sheet["F3"].value)
-            self.assertEqual(sheet.auto_filter.ref, "A1:F3")
-            self.assertEqual({str(rule.sqref): rule.formula1 for rule in sheet.data_validations.dataValidation},
-                             {"A2:A3": '"待选,入选,跳过"', "B2:B3": '"常规产品图,平铺图"'})
+            probe_search.collect_search(page.url, 2, record)
+
+        self.assertEqual([(call.args[0], [item["id"] for item in call.args[1]]) for call in record.call_args_list],
+                         [(1, ["1601683518137"]), (2, ["1601683518137", "1600000000001"])])
 
 
 if __name__ == "__main__":

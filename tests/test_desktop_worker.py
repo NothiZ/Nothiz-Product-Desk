@@ -7,15 +7,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-try:
-    import desktop_worker as worker
-except ModuleNotFoundError:
-    worker=None
+import desktop_worker as worker
 
 
 class DesktopWorkerTests(unittest.TestCase):
     def setUp(self):
-        self.assertIsNotNone(worker, "Worker is not implemented")
         self.temp=tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)

@@ -88,7 +88,7 @@
 
 | 内容       | 输出列                             |
 | :--------- | :--------------------------------- |
-| 商品信息   | `价格`、`上架价格`、`颜色`、`尺寸`、`其他规格` |
+| 商品信息   | `采集价格`、`上架价格`、`颜色`、`尺寸`、`其他规格` |
 | 中文文案   | `AI中文标题`、`AI中文详情`         |
 | 英文文案   | `AI英文标题`、`AI英文详情`         |
 | 检查与处理 | `需检查`、`失败原因`               |
@@ -105,7 +105,7 @@
 
 **需检查**：列出文案中命中的指定词，例如 OEM、批发、平台名称和 LOGO。保留原文、正常导出并计入成功，不触发重写，也不影响续跑。可逐条修改，或筛选这一列集中处理；未命中时留空。
 
-**失败原因**：仅记录链接不支持、采集失败、接口调用失败，或必要的中英文标题、详情缺失等真失败。失败行会尽量保留已有的部分文案，下次续跑时可补做。完整文案即使命中指定词，也会复用，只更新“需检查”；旧版仅因指定词留下的失败标记会在完整文案载入时清除。
+**失败原因**：记录链接不支持、采集失败、接口调用失败或必要的中英文标题、详情缺失。失败行会尽量保留已有的部分文案，下次续跑时可补做。完整文案即使命中指定词，也会复用并更新“需检查”。
 
 成功和失败的结果都按原保存间隔落盘。“需检查”只覆盖指定词，不是语义审核结果，最终仍以人工审核为准。
 
@@ -170,14 +170,6 @@ $env:PLAYWRIGHT_SKIP_BROWSER_GC = "1"
 
 也可以使用 `python image_collection.py <任务选品表.xlsx> <图片目录>` 运行图片采集。用 `--help` 查看模式、阈值和续跑选项。
 
-也可以通过命令行直接生成候选 Excel。首次通过命令行使用时，先运行 `login.py alibaba`。
-
-```powershell
-.\venv\Scripts\python.exe probe_search.py "婴儿奶瓶消毒器" --pages 2 --image-mode "常规产品图"
-```
-
-每次运行会在 `debug/alibaba_search_*/` 生成新的 `候选商品.xlsx`。打开商品或缩略图链接，在「选品结果」列标为「入选」或「跳过」。图片模式默认是「常规产品图」，也可以选「平铺图」，并在表内逐条调整。图片模式供后续取图使用。
-
 <details>
 <summary><strong>命令行批量生成与环境变量</strong></summary>
 
@@ -198,7 +190,7 @@ Copy-Item .env.example .env
 .\venv\Scripts\python.exe run.py
 ```
 
-旧命令 `login.py tmall` 仍兼容。`DESC_TEMPLATE` 可选 `template1`（Key: Value 列表）或 `template2`（Details + Specifications），`RESUME = True` 启用断点续跑。
+`DESC_TEMPLATE` 可选 `template1`（Key: Value 列表）或 `template2`（Details + Specifications），`RESUME = True` 启用断点续跑。
 
 命令行还可在 `.env` 或系统环境变量中配置：
 
@@ -212,17 +204,6 @@ Copy-Item .env.example .env
 | `LLM_RPM`          | AI 请求的每分钟限速，`0` 表示不主动限速 | DeepSeek 为`0`，Gemini 为 `10` |
 
 Gemini 的 `10` 次/分钟是本程序的默认限速，不代表服务商向你的账号提供的额度；批量任务会因限速等待。请按账号实际限制调整，不要仅靠提高并发绕过额度。系统中已存在的同名环境变量优先于 `.env`；桌面版的模型以窗口设置为准，`LLM_RPM` 仍可通过环境变量设置。
-
-</details>
-
-<details>
-<summary><strong>单条商品采集检查</strong></summary>
-
-```powershell
-.\venv\Scripts\python.exe check_product.py "商品详情页的完整链接"
-```
-
-此命令不调用 AI，也不修改批量输出表。结果默认保存至 `debug/product_check.json`，其中 `variant_dimensions` 为变体维度与全部选项，`variants` 为输出表使用的颜色、尺寸及其他规格。添加 `--headless` 可隐藏浏览器；需要手动验证时保持浏览器可见。
 
 </details>
 
@@ -280,11 +261,11 @@ dist/slim-ui/
 | `ai_writer.py`                       | 提示词、双语文案生成与清洗         |
 | `llm_client.py`                      | DeepSeek / Gemini 调用、限速与重试 |
 | `run.py`                             | 批量异步流水线与 Excel 保存        |
-| `login.py` / `check_product.py`      | 平台登录与单条采集检查             |
+| `login.py`                          | 平台登录                           |
 | `desktop.spec` / `build_desktop.ps1` | 打包配置与构建脚本                 |
 | `tests/`                             | 回归测试与本地商品样本             |
 
-开发过程文档和历史源码校验快照已集中在 [docs/dev](docs/dev/README.md)，不参与程序运行。
+开发记录见 [docs/dev](docs/dev/README.md)。
 
 </details>
 
@@ -309,9 +290,9 @@ dist/slim-ui/
 
 ## 本地数据与 API Key
 
-首次打开桌面窗口时，选择上级目录。比如选择 `D:\工作数据`，程序会在其中创建 `ProductDetailsDesktop`，保存设置、登录状态、任务日志、候选图片、离线图片墙和 `选品结果.xlsx`。以后启动时会自动使用该目录。已有默认数据的用户继续使用 `%LOCALAPPDATA%\ProductDetailsDesktop`。详情生成的输入和输出 Excel 由对应任务选择。
+首次打开桌面窗口时，选择上级目录。比如选择 `D:\工作数据`，程序会在其中创建 `ProductDetailsDesktop`，保存设置、登录状态、任务日志、候选图片、离线图片墙和 `选品结果.xlsx`。以后启动时会自动使用该目录。详情生成的输入和输出 Excel 由对应任务选择。
 
-桌面窗口和命令行共用数据目录里的 `alibaba_state.json`、`taobao_state.json` 与 `tmall_auth.json`。项目根目录中的旧登录态会在对应正式文件不存在时迁入。与正式文件完全相同的旧副本会清理，不同内容的旧文件会保留。显式设置 `PRODUCT_DETAILS_DATA_DIR` 时仅使用该目录，不自动导入其他目录的登录态。
+桌面窗口和命令行共用数据目录里的 `alibaba_state.json`、`taobao_state.json` 与 `tmall_auth.json`。也可以通过 `PRODUCT_DETAILS_DATA_DIR` 指定数据目录。
 
 勾选“在本机记住 API Key”后，密钥会以明文保存在本地 `settings.json` 中。不要分享包含密钥或登录状态的数据目录。命令行使用的 `.env`、商品表、登录态和构建产物均已加入 `.gitignore`。
 

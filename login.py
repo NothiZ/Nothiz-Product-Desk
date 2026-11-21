@@ -15,7 +15,6 @@ _LOGIN_URLS = {
 
 
 def login(site: str, confirm=None) -> bool:
-    site = "taobao" if site == "tmall" else site
     sites = ("taobao", "tmall") if site == "taobao" else (site,)
     label = "淘宝 / 天猫" if site == "taobao" else "阿里巴巴"
     completed = False
@@ -58,7 +57,7 @@ def login(site: str, confirm=None) -> bool:
 
 
 if __name__ == "__main__":
-    site = sys.argv[1] if len(sys.argv) > 1 else input(f"登录哪个站点？({'/'.join(STATE_FILES)}): ").strip()
-    if site not in STATE_FILES:
-        sys.exit(f"未知站点：{site!r}，可选：{', '.join(STATE_FILES)}")
+    site = sys.argv[1] if len(sys.argv) > 1 else input(f"登录哪个站点？({'/'.join(_LOGIN_URLS)}): ").strip()
+    if site not in _LOGIN_URLS:
+        sys.exit(f"未知站点：{site!r}，可选：{', '.join(_LOGIN_URLS)}")
     login(site)

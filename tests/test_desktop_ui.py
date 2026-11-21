@@ -355,7 +355,7 @@ class DesktopUiTests(unittest.TestCase):
     def test_startup_error_restores_ready_controls(self):
         self.launch.side_effect = OSError("无法启动子进程")
         with patch.object(self.module.messagebox, "showerror") as error:
-            self.app.start_login("tmall")
+            self.app.start_login("taobao")
         self.assertIsNone(self.app.task)
         self.assertEqual(self.app.start_button.cget("state"), "normal")
         self.assertIn("无法启动", error.call_args.args[1])

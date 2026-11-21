@@ -218,15 +218,12 @@ def _save_images(session, urls, folder, limit, min_side):
     return clear, saved
 
 
-def _has_saved_images(folder, label, score, *, same_mode):
+def _has_saved_images(folder, score):
     _, separator, count = score.partition("/")
     count = count.strip()
     if not separator or not re.fullmatch(r"[1-8]", count):
         return False
-    numbers = range(1, int(count) + 1)
-    if any(folder.glob("[0-9][0-9].jpg")):
-        return same_mode and all((folder / f"{number:02d}.jpg").is_file() for number in numbers)
-    return all((folder / f"{label}_{number:02d}.jpg").is_file() for number in numbers)
+    return all((folder / f"{number:02d}.jpg").is_file() for number in range(1, int(count) + 1))
 
 
 async def collect_images(settings, emit=lambda _event: None, confirm=None, stop_requested=lambda: False):
@@ -279,9 +276,8 @@ async def collect_images(settings, emit=lambda _event: None, confirm=None, stop_
                     normal, skipped = row["folder"], row["skipped_folder"]
                     # Publish a new directory under the plain product code only after it qualifies.
                     folder = normal if normal.is_dir() else skipped
-                    resumed = settings["resume"] and row["status"] in _FINAL and _has_saved_images(
-                        folder, label, row["clear"], same_mode=row["mode"] == settings["mode"]
-                    )
+                    resumed = (settings["resume"] and row["status"] in _FINAL
+                               and row["mode"] == settings["mode"] and _has_saved_images(folder, row["clear"]))
                     if resumed:
                         status, score, note = row["status"], row["clear"], row["note"]
                     else:

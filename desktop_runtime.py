@@ -2,7 +2,6 @@
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -14,7 +13,6 @@ from pathlib import Path
 from tempfile import TemporaryFile
 
 APP_TITLE = "产品详情生成"
-EVENT_PREFIX = "@@PD_EVENT "
 DEFAULT_PRICE_MULTIPLIER = "1.25"
 _PUBLIC_SETTINGS = ("provider", "model", "template", "input_file", "output_file", "resume", "show_browser",
                     "price_multiplier")
@@ -30,7 +28,7 @@ def default_image_settings(mode=IMAGE_MODES[0]):
 
 def default_search_settings():
     return {"search": "婴儿奶瓶消毒器", "pages": 2, "limit": 60, "required": "", "excluded": "",
-            "category": "", "prefix": "", "image_mode": IMAGE_MODES[0], "show_browser": True}
+            "category": "", "prefix": "", "show_browser": True}
 
 
 def default_settings():
@@ -67,10 +65,7 @@ def _configured_user_data_dir():
 
 
 def needs_user_data_setup():
-    if _configured_user_data_dir() is not None:
-        return False
-    legacy = _default_user_data_dir()
-    return not legacy.is_dir() or not any(legacy.iterdir())
+    return _configured_user_data_dir() is None
 
 
 def configure_user_data_dir(parent):
@@ -96,17 +91,7 @@ def resource_dir():
 
 
 def login_state_path(filename):
-    destination = user_data_dir() / filename
-    # Explicit worker/test directories must not import unrelated credentials.
-    if os.getenv("PRODUCT_DETAILS_DATA_DIR"):
-        return destination
-    legacy = resource_dir() / filename
-    if legacy.resolve() != destination.resolve() and legacy.is_file():
-        if not destination.exists():
-            shutil.move(str(legacy), str(destination))
-        elif legacy.read_bytes() == destination.read_bytes():
-            legacy.unlink()
-    return destination
+    return user_data_dir() / filename
 
 
 def configure_browser_path():
@@ -213,7 +198,7 @@ def validate_generation(settings, api_key):
 
 def validate_candidate_search(settings):
     normalized = {name: settings.get(name, value) for name, value in default_search_settings().items()}
-    for name in ("search", "required", "excluded", "category", "prefix", "image_mode"):
+    for name in ("search", "required", "excluded", "category", "prefix"):
         normalized[name] = str(normalized[name]).strip()
     if not any(term.strip() for term in re.split(r"[,，]", normalized["search"])):
         raise ValueError("请填写搜索关键词。")
@@ -229,8 +214,6 @@ def validate_candidate_search(settings):
     if prefix and not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,7}", prefix):
         raise ValueError("编号前缀须以英文字母开头，最多 8 个英文字母或数字。")
     normalized["prefix"] = prefix.upper()
-    if normalized["image_mode"] not in IMAGE_MODES:
-        raise ValueError("请选择有效的图片模式。")
     normalized["show_browser"] = bool(normalized["show_browser"])
     return normalized
 
@@ -314,18 +297,8 @@ class RunningTask:
         return [line.decode("utf-8", errors="replace").rstrip("\r") for line in lines]
 
     def read_updates(self):
-        updates = []
-        for text in self._read_lines("worker.log", "_offset", "_pending"):
-            if text.startswith(EVENT_PREFIX):
-                try:
-                    event = json.loads(text[len(EVENT_PREFIX):])
-                    if isinstance(event, dict) and isinstance(event.get("type"), str):
-                        updates.append(event)
-                        continue
-                except ValueError:
-                    pass
-            if text:
-                updates.append({"type": "log", "message": text})
+        updates = [{"type": "log", "message": text}
+                   for text in self._read_lines("worker.log", "_offset", "_pending") if text]
         # A separate stream keeps progress framing independent of threaded print() calls.
         for text in self._read_lines("events.jsonl", "_event_offset", "_event_pending"):
             try:
@@ -340,19 +313,17 @@ class RunningTask:
 def launch_job(settings, *, kind="generate", api_key="", site="alibaba"):
     if kind not in _JOB_LABELS:
         raise ValueError("未知任务类型")
-    if site not in ("alibaba", "taobao", "tmall"):
+    if kind == "login" and site not in ("alibaba", "taobao"):
         raise ValueError("未知登录站点")
     if kind == "generate":
         settings = validate_generation(settings, api_key)
-    if kind == "search":
+        public_settings = {key: settings[key] for key in _PUBLIC_SETTINGS}
+    elif kind == "search":
         public_settings = validate_candidate_search(settings)
     elif kind == "images":
         public_settings = validate_image_settings(settings)
     else:
-        public_settings = {k: settings.get(k, default_settings()[k]) for k in _PUBLIC_SETTINGS}
-    # Migrate before the worker receives its explicit data-directory override.
-    for filename in ("alibaba_state.json", "taobao_state.json", "tmall_auth.json"):
-        login_state_path(filename)
+        public_settings = {}
     data_dir = user_data_dir()
     jobs = data_dir / "jobs"
     jobs.mkdir(exist_ok=True)
@@ -374,9 +345,8 @@ def launch_job(settings, *, kind="generate", api_key="", site="alibaba"):
     command.extend(["--worker", str(task_file)])
     env = os.environ.copy()
     env.update(PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PRODUCT_DETAILS_DATA_DIR=str(data_dir))
-    provider = settings.get("provider", "deepseek")
-    if kind == "generate" and api_key:
-        env[f"{provider.upper()}_API_KEY"] = str(api_key).strip()
+    if kind == "generate":
+        env[f"{settings['provider'].upper()}_API_KEY"] = str(api_key).strip()
     process = subprocess.Popen(command, cwd=str(data_dir), env=env, stdin=subprocess.DEVNULL,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))

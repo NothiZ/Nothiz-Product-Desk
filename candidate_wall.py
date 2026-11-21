@@ -11,7 +11,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from PIL import Image, ImageFilter, ImageOps, ImageStat
 
-from desktop_runtime import IMAGE_MODES, resource_dir, save_workbook_atomic, workbook_write_lock, write_json
+from desktop_runtime import resource_dir, save_workbook_atomic, workbook_write_lock, write_json
 from probe_search import collect_search, search_url
 
 _SIZED_IMAGE = re.compile(r"(\.(?:jpe?g|png|webp|avif))_\d+x\d+(?:[a-z0-9]*)\.(?:jpe?g|png|webp|avif)$", re.I)
@@ -21,7 +21,7 @@ _BYTE_LIMIT = 16 * 1024 * 1024
 # Initial edge-variance cutoff, to be calibrated against reviewed product photos.
 SHARPNESS_THRESHOLD = 100
 _CSV_HEADERS = ["商品 ID", "链接", "标题"]
-_RESULT_HEADERS = ["商品编号", "分类名", "商品 ID", "标题", "链接", "图片模式"]
+_RESULT_HEADERS = ["商品编号", "分类名", "商品 ID", "标题", "链接"]
 
 
 def _trusted_url(url, domains):
@@ -101,10 +101,8 @@ def _resolve_prefix(category, prefix):
     return prefix.upper()
 
 
-def write_candidate_wall(candidates, folder, *, category="", prefix="", image_mode=IMAGE_MODES[0],
+def write_candidate_wall(candidates, folder, *, category="", prefix="",
                          emit=lambda _event: None, stop_requested=lambda: False):
-    if image_mode not in IMAGE_MODES:
-        raise ValueError("未识别的图片模式")
     prefix = _resolve_prefix(category, prefix)
     template = (resource_dir() / "assets" / "candidate_wall.html").read_text(encoding="utf-8")
     images = folder / "candidates"
@@ -117,14 +115,14 @@ def write_candidate_wall(candidates, folder, *, category="", prefix="", image_mo
             if not re.fullmatch(r"[0-9]{8,24}", product_id) or not _trusted_url(url, ("alibaba.com",)):
                 raise ValueError("候选商品编号或链接无效")
             item = {"id": product_id, "title": candidate["title"], "url": url, "image": "",
-                    "width": None, "height": None, "quality": "未获取", "rejected": False}
+                    "width": None, "height": None, "quality": "未获取"}
             if not stop_requested():
                 item.update(_download_image(session, candidate["thumb"], product_id, images))
             downloaded += bool(item["image"])
             items.append(item)
             emit({"type": "progress", "total": len(candidates), "done": downloaded, "failed": number - downloaded,
                   "message": f"已下载主图 {downloaded}/{len(candidates)}"})
-    manifest = {"category": category, "prefix": prefix, "image_mode": image_mode, "items": items}
+    manifest = {"category": category, "prefix": prefix, "items": items}
     # Escaping '<' prevents untrusted titles from closing the JSON script element.
     encoded = json.dumps(manifest, ensure_ascii=False).replace("<", r"\u003c")
     wall = folder / "candidates.html"
@@ -171,7 +169,7 @@ def run_candidate_search(settings, folder, emit, prompt, stop_requested):
             break
 
     wall, items = write_candidate_wall(list(candidates.values()), folder, category=settings.get("category", ""),
-                                       prefix=settings.get("prefix", ""), image_mode=settings.get("image_mode", IMAGE_MODES[0]),
+                                       prefix=settings.get("prefix", ""),
                                        emit=emit, stop_requested=stop_requested)
     ready = sum(bool(item["image"]) for item in items)
     stopped = stop_requested()
@@ -214,12 +212,10 @@ def _update_task_workbook(path, rows):
             workbook.close()
 
 
-def import_selection(csv_path, manifest_path, workbook_path, *, task_workbook_path=None):
+def import_selection(csv_path, manifest_path, workbook_path, *, task_workbook_path):
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     category = manifest["category"]
     prefix = _resolve_prefix(category, manifest["prefix"])
-    if manifest["image_mode"] not in IMAGE_MODES:
-        raise ValueError("候选批次的图片模式无效")
     known = {item["id"]: item for item in manifest["items"]}
     selected = {}
     with csv_path.open(encoding="utf-8-sig", newline="") as file:
@@ -233,7 +229,7 @@ def import_selection(csv_path, manifest_path, workbook_path, *, task_workbook_pa
             selected[item["id"]] = item
     if not selected:
         raise ValueError("CSV 中没有选中商品")
-    if task_workbook_path is not None and task_workbook_path.resolve() == workbook_path.resolve():
+    if task_workbook_path.resolve() == workbook_path.resolve():
         raise ValueError("任务选品表与总表必须位于不同文件夹")
 
     # Lock the read/number/save cycle across windows so they cannot allocate the same code.
@@ -252,25 +248,19 @@ def import_selection(csv_path, manifest_path, workbook_path, *, task_workbook_pa
                 last += 1
                 code = f"{prefix}{last:02d}"
                 title = ILLEGAL_CHARACTERS_RE.sub("", item["title"])
-                added.append((code, category, product_id, title, item["url"], manifest["image_mode"]))
+                added.append((code, category, product_id, title, item["url"]))
 
-            task_codes = set()
-            if task_workbook_path is not None:
-                folder = task_workbook_path.parent.resolve()
-                root = workbook_path.parent.resolve()
-                task_key = str(folder.relative_to(root) if folder.is_relative_to(root) else folder)
-                index_name = "_选品任务"
-                index = workbook[index_name] if index_name in workbook.sheetnames else None
-                if added:
-                    if index is None:
-                        index = workbook.create_sheet(index_name)
-                        index.sheet_state = "hidden"
-                    # Save the source task with each code so a retry can repair a failed task export.
-                    for row in added:
-                        index.append((task_key, row[0]))
-                        index.cell(index.max_row, 1).data_type = "s"
-                if index is not None:
-                    task_codes = {code for key, code in index.values if key == task_key}
+            folder = task_workbook_path.parent.resolve()
+            root = workbook_path.parent.resolve()
+            task_key = str(folder.relative_to(root) if folder.is_relative_to(root) else folder)
+            index_name = "_选品任务"
+            index = workbook[index_name] if index_name in workbook.sheetnames else workbook.create_sheet(index_name)
+            index.sheet_state = "hidden"
+            # Retain codes by task so a retry can finish writing its workbook.
+            for row in added:
+                index.append((task_key, row[0]))
+                index.cell(index.max_row, 1).data_type = "s"
+            task_codes = {code for key, code in index.values if key == task_key}
 
             _save_result_rows(workbook, sheet, added, workbook_path)
             if task_codes:

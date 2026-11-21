@@ -1,16 +1,9 @@
-"""Collect Alibaba Deep Search candidates and export them for Excel review."""
+"""Collect Alibaba search results for the desktop candidate wall."""
 
-import argparse
-import json
 import re
-from pathlib import Path
-from tempfile import mkdtemp
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
-
-from candidate_workbook import write_candidates
-from desktop_runtime import IMAGE_MODES
 
 ORIGIN = "https://www.alibaba.com"
 SEARCH_URL = f"{ORIGIN}/search/page"
@@ -150,41 +143,3 @@ def collect_search(url, pages, consume, *, headless=False, confirm=None, stop_re
         raise failure
     if not processed and not stop_requested():
         raise RuntimeError(f"搜索页未返回可采集结果，HTTP {response.status}")
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("search", help="搜索关键词或 https://www.alibaba.com/search/page 的完整地址")
-    parser.add_argument("--pages", type=int, default=2)
-    parser.add_argument("--image-mode", choices=IMAGE_MODES, default=IMAGE_MODES[0], help="候选表的默认图片模式")
-    parser.add_argument("--headless", action="store_true")
-    args = parser.parse_args()
-    if args.pages < 1:
-        parser.error("页数必须大于 0")
-    try:
-        url = search_url(args.search)
-    except ValueError as error:
-        parser.error(str(error))
-    Path("debug").mkdir(exist_ok=True)
-    out = Path(mkdtemp(prefix="alibaba_search_", dir="debug"))
-    candidates = {}
-
-    def record(number, items):
-        new = len({item["id"] for item in items} - candidates.keys())
-        for item in items:
-            candidates.setdefault(item["id"], item)
-        (out / f"page_{number}.json").write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"第 {number} 页 · {len(items)} 个商品，新增 {new}，重复 {len(items) - new}"
-              f"，缺标题 {sum(not item['title'] for item in items)}，缺缩略图 {sum(not item['thumb'] for item in items)}")
-
-    try:
-        collect_search(url, args.pages, record, headless=args.headless)
-    except Exception as error:
-        raise SystemExit(str(error)) from error
-    workbook = out / "候选商品.xlsx"
-    write_candidates(workbook, candidates.values(), args.image_mode)
-    print(f"共 {len(candidates)} 个不同商品。候选 Excel 已保存到 {workbook.resolve()}")
-
-
-if __name__ == "__main__":
-    main()

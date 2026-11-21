@@ -180,7 +180,7 @@ class DesktopApp(ctk.CTk):
         if isinstance(saved_search, dict):
             search_settings.update({key: saved_search[key] for key in search_settings if key in saved_search})
         self.search_vars = {key: tk.StringVar(self, value=value) for key, value in search_settings.items()
-                            if key not in ("show_browser", "image_mode")}
+                            if key != "show_browser"}
         self.search_browser_var = tk.BooleanVar(self, value=bool(search_settings["show_browser"]))
         self.image_vars = {key: (tk.BooleanVar if isinstance(value, bool) else tk.StringVar)(self, value=value)
                            for key, value in default_image_settings().items()}
@@ -874,7 +874,7 @@ class DesktopApp(ctk.CTk):
 
     def start_login(self, site, *, search_panel=False, image_panel=False):
         if not self.task:
-            self._start_task(self.collect_settings(), search_panel=search_panel, image_panel=image_panel, kind="login", site=site)
+            self._start_task({}, search_panel=search_panel, image_panel=image_panel, kind="login", site=site)
 
     def _start_task(self, settings, *, search_panel=False, image_panel=False, **options):
         self._save_settings()

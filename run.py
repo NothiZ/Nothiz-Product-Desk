@@ -25,13 +25,10 @@ SAVE_EVERY = 5                   # 每完成 N 条保存一次
 HEADLESS = False                 # False 才能在淘宝弹出滑块时手动验证；纯阿里可设 True
 SCRAPE_CONCURRENCY = {"alibaba": 2, "taobao": 1}   # 同时打开的标签页数；淘宝/天猫不建议调大
 LLM_WORKERS = 3                  # 同时进行的 AI 请求数（Gemini 免费档另受 llm_client 的限速约束）
-ENABLE_DEBUG_COLS = False        # 是否写入抓取调试列
 # ═════════════════════════════════════════════════════════════
 
 AI_COLUMNS = {"AI中文标题": "title_cn", "AI英文标题": "title_en", "AI中文详情": "desc_cn", "AI英文详情": "desc_en"}
 RESULT_COLS = ["采集价格", *AI_COLUMNS, "颜色", "尺寸", "其他规格", "需检查", "失败原因"]
-DEBUG_COLS = {"最终URL": "final_url", "页面标题(原始)": "page_title_raw", "页面标题(清洗)": "title",
-              "抓取关键词": "url_keywords", "抓取文本(片段)": "description", "抓取文本(原始片段)": "description_raw"}
 _LISTING_AMOUNT = re.compile(
     r"(US\$|(?:CNY|CN)[¥￥]|[¥￥$€£]|[A-Z]{3})?\s*((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?)",
     re.IGNORECASE,
@@ -49,30 +46,25 @@ def _detect_url_column(df: pd.DataFrame) -> str:
 
 
 def _load() -> tuple[pd.DataFrame, str]:
-    df = pd.read_excel(INPUT_FILE).drop(columns=["图片"], errors="ignore")
-    if "采集价格" not in df.columns:
-        df = df.rename(columns={"价格": "采集价格"})
+    df = pd.read_excel(INPUT_FILE)
     if "采集状态" in df.columns:
         df = df.loc[df["采集状态"].astype("string").str.strip().eq("已完成").fillna(False)].reset_index(drop=True)
     url_col = _detect_url_column(df)
-    cols = RESULT_COLS + (list(DEBUG_COLS) if ENABLE_DEBUG_COLS else [])
-    for c in cols:
+    for c in RESULT_COLS:
         if c not in df.columns:
             df[c] = ""
         df[c] = df[c].astype("string").fillna("")  # 避免 pandas 把空列推断成 float
     if RESUME and os.path.exists(OUTPUT_FILE):  # 按链接逐行复用上次结果：增删、改动、调整顺序都不影响
         old = pd.read_excel(OUTPUT_FILE)
-        if "采集价格" not in old.columns:
-            old = old.rename(columns={"价格": "采集价格"})
         if url_col in old.columns and "AI中文标题" in old.columns:
-            keep = old["AI中文标题"].fillna("").astype(str).str.strip() != ""
+            keep = old["AI中文标题"].astype("string").fillna("").str.strip() != ""
             if "失败原因" in old.columns:
-                keep |= old["失败原因"].fillna("").astype(str).str.strip() != ""
+                keep |= old["失败原因"].astype("string").fillna("").str.strip() != ""
             old = old[keep]
             prev = old.assign(_k=old[url_col].astype(str).str.strip()).drop_duplicates("_k").set_index("_k")
             keys = df[url_col].astype(str).str.strip()
             hit = keys.isin(prev.index)
-            for c in (c for c in cols if c in prev.columns):
+            for c in (c for c in RESULT_COLS if c in prev.columns):
                 df.loc[hit, c] = keys[hit].map(prev[c]).astype("string").fillna("")
             print(f"续跑：载入上次保存的 {int(hit.sum())} 行，失败或不完整的文案会重新处理。")
     # Review notes never decide whether a row failed or should be regenerated.
@@ -140,10 +132,6 @@ def _fill_row(df: pd.DataFrame, idx, product: dict, ai: dict) -> None:
     row = {"采集价格": product["price"], **{col: ai[key] for col, key in AI_COLUMNS.items()},
            **{c: product["variants"].get(c, "") for c in ("颜色", "尺寸", "其他规格")},
            "需检查": "、".join(find_review_terms(ai)), "失败原因": ""}
-    if ENABLE_DEBUG_COLS:
-        for col, key in DEBUG_COLS.items():
-            v = product.get(key, "")
-            row[col] = (", ".join(v) if isinstance(v, list) else v or "")[:800 if key.startswith("desc") else None]
     for col, v in row.items():
         df.at[idx, col] = v
 

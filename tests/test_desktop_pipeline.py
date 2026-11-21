@@ -42,10 +42,9 @@ class DesktopPipelineTests(unittest.IsolatedAsyncioTestCase):
             source, target = Path(folder)/"input.xlsx", Path(folder)/"output.xlsx"
             url = "https://www.alibaba.com/product-detail/test_1.html"
             pd.DataFrame({"链接":[url]}).to_excel(source,index=False)
-            pd.DataFrame({"链接":[url], "价格":["US$10"], "上架价格":["US$12.50"],
+            pd.DataFrame({"链接":[url], "采集价格":["US$10"], "上架价格":["US$12.50"],
                           "AI中文标题":["淘宝帽子"], "AI英文标题":["Taobao Hat"],
-                          "AI中文详情":["支持OEM定制"], "AI英文详情":["Supports wholesale orders."],
-                          "失败原因":["旧版因指定词标记失败"]}).to_excel(target,index=False)
+                          "AI中文详情":["支持OEM定制"], "AI英文详情":["Supports wholesale orders."]}).to_excel(target,index=False)
             with patch.multiple(run, INPUT_FILE=str(source), OUTPUT_FILE=str(target), RESUME=True), \
                  patch.object(run, "PRICE_MULTIPLIER", "1.50"), \
                  patch.object(run, "Scraper", FakeScraper), \
@@ -308,7 +307,7 @@ class ContentReviewResumeTests(unittest.TestCase):
             self.assertEqual(loaded.loc[0,"AI中文标题"], "普通帽子")
             self.assertTrue(loaded.loc[0].get("失败原因", ""))
 
-    def test_complete_flagged_results_are_kept_and_old_word_failures_are_cleared(self):
+    def test_complete_results_recompute_review_notes(self):
         for has_note in (False, True):
             with self.subTest(has_note=has_note), tempfile.TemporaryDirectory() as folder:
                 source, target = Path(folder)/"input.xlsx", Path(folder)/"output.xlsx"
@@ -319,7 +318,6 @@ class ContentReviewResumeTests(unittest.TestCase):
                     "AI英文详情":["Supports wholesale orders.", "Custom fit for comfort."]})
                 if has_note:
                     old["需检查"] = ["过期标记", "过期标记"]
-                old["失败原因"] = ["AI 自动修正后仍包含淘宝", ""]
                 old.to_excel(target,index=False)
                 with patch.multiple(run, INPUT_FILE=str(source), OUTPUT_FILE=str(target), RESUME=True):
                     loaded, _ = run._load()

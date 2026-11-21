@@ -50,19 +50,12 @@ class ImageCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page_status("https://login.alibaba.com/", "Alibaba.com", ""), "需登录")
         self.assertEqual(page_status(LINK, "Alibaba.com", "<body><h1>该商品已下架</h1></body>"), "已下架")
 
-    def test_resume_checks_numbered_photos_by_mode_and_supports_legacy_names(self):
+    def test_resume_requires_all_numbered_photos(self):
         with TemporaryDirectory() as directory:
             folder = Path(directory)
-            legacy = folder / "主图_01.jpg"
-            legacy.touch()
-            self.assertTrue(_has_saved_images(folder, "主图", "1 / 1", same_mode=False))
-            self.assertFalse(_has_saved_images(folder, "候选", "1 / 1", same_mode=True))
-
-            numbered = folder / "01.jpg"
-            numbered.touch()
-            self.assertTrue(_has_saved_images(folder, "主图", "1 / 1", same_mode=True))
-            self.assertFalse(_has_saved_images(folder, "主图", "1 / 1", same_mode=False))
-            self.assertFalse(_has_saved_images(folder, "主图", "2 / 2", same_mode=True))
+            (folder / "01.jpg").touch()
+            self.assertTrue(_has_saved_images(folder, "1 / 1"))
+            self.assertFalse(_has_saved_images(folder, "2 / 2"))
 
     async def test_collects_only_task_rows_saves_photos_and_resumes_terminal_rows(self):
         with TemporaryDirectory() as directory:

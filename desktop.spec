@@ -6,7 +6,6 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files
 root = Path(SPECPATH)
 datas = [(str(root / "build-resources" / "browsers"), "browsers"),
          (str(root / "assets" / "logo.ico"), "assets"),
-         (str(root / "assets" / "logo.png"), "assets"),
          (str(root / "assets" / "candidate_wall.html"), "assets"),
          (str(root / "tests" / "fixtures" / "alibaba_1601683518137.html"), "selftest")]
 datas += collect_data_files("customtkinter")

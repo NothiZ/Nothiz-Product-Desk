@@ -369,20 +369,6 @@ async def _block_assets(route):
 
 # ── 浏览器会话 ────────────────────────────────────────────────────────────────
 
-def _dump_sku(url: str, html: str) -> None:
-    """Save enough page evidence to diagnose missing variants locally."""
-    soup = BeautifulSoup(html, _PARSER)
-    mods = soup.select(_SKU_REGIONS + ", " + _TAO_SKU_REGIONS)
-    m = re.search(r"_(\d+)\.html", url)
-    item_id = m.group(1) if m else parse_qs(urlparse(url).query).get("id", ["page"])[0]
-    item_id = item_id if re.fullmatch(r"\d+", item_id) else "page"
-    path = os.path.join("debug", f"sku_{item_id}.html")
-    os.makedirs("debug", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(map(str, mods)) if any(n.get_text(strip=True) for n in mods) else html)
-    print(f"⚠ 没读到变体，已保存 {path}")
-
-
 def validate_product_url(url: str) -> str:
     """Validate the actual host and return its supported login site."""
     try:
@@ -588,8 +574,6 @@ class Scraper:
 
         cells = _variant_cells(dims)
         print("变体:", cells or "未读到")
-        if not dims:
-            _dump_sku(url, html)
         title = clean_page_title(raw_title) or d.get("h1", "")
         print("清洗后标题:", title)
         if not title:
@@ -601,9 +585,7 @@ class Scraper:
             "title": title,
             "price": d["price"],
             "description": _filter_generic_text(raw, 3200, 800) if ali else _filter_chinese_text(raw, 2500),
-            "description_raw": raw,
             "url_keywords": _extract_url_keywords(final_url),
-            "final_url": final_url,
             "page_title_raw": raw_title,
             "variants": cells,
             "variant_dimensions": dims,

@@ -32,15 +32,13 @@
     a { color: inherit; text-decoration: none; }
     a:hover, a:focus-visible { color: var(--blue-hover); text-decoration: underline; text-underline-offset: .2em; }
 
-    .topbar, .actions, .options, .pager { display: flex; align-items: center; gap: 10px; }
+    .topbar, .actions, .pager { display: flex; align-items: center; gap: 10px; }
     .topbar { align-items: flex-start; justify-content: space-between; gap: 12px 24px; }
-    .actions, .options { flex-wrap: wrap; }
-    .actions { flex: 0 0 auto; }
+    .actions { flex: 0 0 auto; flex-wrap: wrap; }
     h1 { margin: 0 0 2px; font-size: 1.35rem; line-height: 1.25; overflow-wrap: anywhere; }
-    .details, .options, .source, .footer-note { color: var(--muted); font-size: .86rem; }
-    .details, .options p, .source, .footer-note { margin: 0; }
-    .options { margin: 8px 0 10px; gap: 5px 22px; }
-    .options label { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; cursor: pointer; }
+    .details, .quality-note, .source, .footer-note { color: var(--muted); font-size: .86rem; }
+    .details, .source, .footer-note { margin: 0; }
+    .quality-note { margin: 8px 0 10px; }
     .selected-count { color: var(--blue-hover); font-weight: 650; white-space: nowrap; }
     .control {
       min-height: 36px;
@@ -64,7 +62,6 @@
     .primary:enabled:hover, .primary:enabled:active { background: var(--blue-hover); border-color: transparent; }
     .primary:disabled { background: #dfe8f8; }
     input[type="checkbox"] { width: 19px; height: 19px; margin: 0; accent-color: #086bed; }
-    .options input { width: 14px; height: 14px; }
 
     .results {
       border: 1px solid var(--line);
@@ -167,10 +164,7 @@
         <button class="control primary" type="button" id="export">导出选中（0）</button>
       </div>
     </header>
-    <div class="options">
-      <label><input type="checkbox" id="show-eliminated"><span id="eliminated-label">显示已淘汰（0）</span></label>
-      <p>清晰度为自动评估，仅供参考。点击主图可查看大图。</p>
-    </div>
+    <p class="quality-note">清晰度为自动评估，仅供参考。点击主图可查看大图。</p>
     <div class="results">
       <table aria-label="候选商品">
         <thead>
@@ -214,14 +208,11 @@
     const { category, items } = JSON.parse(get("candidate-data").textContent);
     const PAGE_SIZE = 20;
     const selected = new Set();
-    const eligible = items.filter((item) => !item.rejected);
-    const eliminatedCount = items.length - eligible.length;
     const qualityStyles = new Map([
       ["清晰", "clear"], ["偏糊", "blurred"], ["分辨率低", "low-resolution"],
       ["未获取", "unavailable"], ["待复核", "pending"]
     ]);
     const rows = get("rows");
-    const showEliminated = get("show-eliminated");
     const selectPage = get("select-page");
     const clear = get("clear");
     const exportButton = get("export");
@@ -291,7 +282,6 @@
       const source = make("p", "", "source");
       const domain = url ? new URL(url).hostname.replace(/^www\./, "") : "来源链接不可用";
       source.append(make("span", `${rank} · `, "mobile-number"), domain);
-      if (item.rejected) source.append(" · 已淘汰");
       product.append(title, source);
 
       const size = item.width > 0 && item.height > 0 ? `${item.width} × ${item.height}` : "—";
@@ -331,15 +321,13 @@
     }
 
     function render() {
-      const visibleItems = showEliminated.checked ? items : eligible;
-      const pages = Math.ceil(visibleItems.length / PAGE_SIZE);
+      const pages = Math.ceil(items.length / PAGE_SIZE);
       page = Math.min(page, pages || 1);
       const offset = (page - 1) * PAGE_SIZE;
-      pageItems = visibleItems.slice(offset, offset + PAGE_SIZE);
+      pageItems = items.slice(offset, offset + PAGE_SIZE);
       rows.replaceChildren(...pageItems.map((item, index) => candidateRow(item, offset + index + 1)));
       if (!pageItems.length) {
-        const message = items.length ? "当前候选均已淘汰，可勾选“显示已淘汰”查看。" : "本次搜索没有候选商品。";
-        const empty = make("td", message, "empty");
+        const empty = make("td", "本次搜索没有候选商品。", "empty");
         empty.colSpan = 6;
         const row = make("tr");
         row.append(empty);
@@ -347,7 +335,7 @@
       }
 
       const pageText = `第 ${pages ? page : 0} / ${pages} 页`;
-      get("summary").textContent = `共 ${items.length} 个，已自动淘汰 ${eliminatedCount} 个 · ${pageText}，每页 ${PAGE_SIZE} 个 · 跨页勾选会保留`;
+      get("summary").textContent = `共 ${items.length} 个 · ${pageText}，每页 ${PAGE_SIZE} 个 · 跨页勾选会保留`;
       get("page-status").textContent = pageText;
       selectPage.disabled = !pageItems.length;
       previous.disabled = page <= 1;
@@ -395,9 +383,6 @@
 
     const heading = category ? `候选商品 · ${category}` : "候选商品";
     get("heading").textContent = document.title = heading;
-    get("eliminated-label").textContent = `显示已淘汰（${eliminatedCount}）`;
-    showEliminated.disabled = eliminatedCount === 0;
-    showEliminated.addEventListener("change", render);
     selectPage.addEventListener("click", () => {
       for (const item of pageItems) selected.add(item.id);
       updateSelection();

@@ -1,11 +1,10 @@
 import unittest
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 
-from scraper import _dump_sku, _extract_alibaba, _extract_taobao, _variant_cells
+from scraper import _extract_alibaba, _extract_taobao, _variant_cells
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "alibaba_1601683518137.html"
@@ -61,11 +60,6 @@ class VariantExtractionTests(unittest.TestCase):
 
 
 class TaobaoVariantTests(unittest.TestCase):
-    def test_diagnostic_filename_does_not_use_path_characters_from_item_id(self):
-        with patch("scraper.open", create=True) as opened, patch("scraper.os.makedirs"):
-            _dump_sku("https://item.taobao.com/item.htm?id=../outside", "<html></html>")
-        self.assertEqual(Path(opened.call_args.args[0]), Path("debug/sku_page.html"))
-
     def fixture(self, name):
         return (FIXTURE.parent / name).read_text(encoding="utf-8")
 

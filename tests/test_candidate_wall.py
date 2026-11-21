@@ -41,8 +41,7 @@ class CandidateWallTests(unittest.TestCase):
         html = wall.read_text(encoding="utf-8")
         self.assertIn(r"\u003c/script>", html)
         self.assertNotIn("</script><img", html)
-        self.assertEqual((items[0]["width"], items[0]["height"], items[0]["quality"], items[0]["rejected"]),
-                         (800, 720, "偏糊", False))
+        self.assertEqual((items[0]["width"], items[0]["height"], items[0]["quality"]), (800, 720, "偏糊"))
         self.assertTrue((self.folder / items[0]["image"]).is_file())
 
     def test_import_reuses_existing_numbering_and_ignores_edited_titles(self):
@@ -50,7 +49,7 @@ class CandidateWallTests(unittest.TestCase):
             folder = self.folder / "jobs" / name
             folder.mkdir(parents=True)
             manifest = folder / "candidate_manifest.json"
-            manifest.write_text(json.dumps({"category": "奶瓶消毒器", "prefix": "NP", "image_mode": "常规产品图",
+            manifest.write_text(json.dumps({"category": "奶瓶消毒器", "prefix": "NP",
                                             "items": self.records}), encoding="utf-8")
             return manifest, folder / "选品结果.xlsx"
 
@@ -99,13 +98,14 @@ class CandidateWallTests(unittest.TestCase):
 
     def test_import_rejects_a_url_that_was_not_in_the_wall(self):
         manifest = self.folder / "candidate_manifest.json"
-        manifest.write_text(json.dumps({"category": "", "prefix": "SP", "image_mode": "常规产品图",
+        manifest.write_text(json.dumps({"category": "", "prefix": "SP",
                                         "items": self.records}), encoding="utf-8")
         csv_path = self.folder / "选中结果.csv"
         csv_path.write_text("商品 ID,链接,标题\n1601683518137,https://example.com/,Not a candidate\n", encoding="utf-8-sig")
         workbook = self.folder / "选品结果.xlsx"
         with self.assertRaisesRegex(ValueError, "当前候选"):
-            candidate_wall.import_selection(csv_path, manifest, workbook)
+            candidate_wall.import_selection(csv_path, manifest, workbook,
+                                            task_workbook_path=self.folder / "jobs" / "test" / workbook.name)
         self.assertFalse(workbook.exists())
 
     def test_search_filters_titles_and_stops_at_the_run_limit(self):

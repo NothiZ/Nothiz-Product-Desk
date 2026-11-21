@@ -95,6 +95,52 @@ class ImageCollectionTests(unittest.IsolatedAsyncioTestCase):
                 await collect_images(settings)
             self.assertTrue(photo.is_file())
 
+    async def test_unsuccessful_photo_folders_are_marked_and_recovered_on_retry(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "选品结果.xlsx"
+            output = root / "图片"
+            book = Workbook()
+            book.active.append(["商品编号", "分类名", "链接"])
+            book.active.append(["JS04", "Jersey", LINK])
+            book.save(path)
+            book.close()
+            normal = output / "Jersey" / "JS04"
+            skipped = normal.with_name("JS04-跳过")
+            settings = {"input_file": str(path), "output_dir": str(output), "show_browser": False}
+            status = "已淘汰"
+
+            async def download(_scraper, _session, row, *_args):
+                row["folder"].mkdir(parents=True, exist_ok=True)
+                (row["folder"] / "主图_01.jpg").write_bytes(b"saved image")
+                return status, "1 / 1", ""
+
+            with patch("image_collection._collect_product", new=AsyncMock(side_effect=download)) as collect:
+                await collect_images(settings)
+                self.assertTrue((skipped / "主图_01.jpg").is_file())
+                self.assertFalse(normal.exists())
+
+                skipped.rename(normal)
+                await collect_images(settings)
+                self.assertTrue((skipped / "主图_01.jpg").is_file())
+                self.assertFalse(normal.exists())
+                self.assertEqual(collect.await_count, 1)
+
+                status = "失败"
+                await collect_images({**settings, "resume": False})
+                self.assertTrue(skipped.is_dir())
+
+                status = "已完成"
+                await collect_images({**settings, "min_clear": 1})
+                self.assertTrue((normal / "主图_01.jpg").is_file())
+                self.assertFalse(skipped.exists())
+
+                skipped.mkdir()
+                with self.assertRaisesRegex(ValueError, "同时存在"):
+                    await collect_images(settings)
+                self.assertTrue((normal / "主图_01.jpg").is_file())
+                self.assertTrue(skipped.is_dir())
+
     def test_details_input_keeps_only_completed_image_rows(self):
         import run
 

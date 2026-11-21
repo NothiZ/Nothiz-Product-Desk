@@ -246,15 +246,20 @@ async def collect_images(settings, emit=lambda _event: None, confirm=None, stop_
             columns, rows = _selection_rows(sheet)
             if not rows:
                 raise ValueError("选品结果表没有需要采集的商品。")
-            folders = {}
+            folders = set()
             for row in rows:
                 code = _folder_name(row["code"], "")
-                folder = (output / _folder_name(row["category"], "未分类") / code).resolve()
-                key = str(folder).casefold()
-                if not code or folder == output or not folder.is_relative_to(output) or key in folders:
+                category = (output / _folder_name(row["category"], "未分类")).resolve()
+                folder = category / code
+                skipped = category / f"{code}-跳过"
+                keys = {str(path).casefold() for path in (folder, skipped)}
+                if (not code or not category.is_relative_to(output) or folders & keys
+                        or any(path.resolve() != path or (path.exists() and not path.is_dir()) for path in (folder, skipped))):
                     raise ValueError(f"第 {row['row']} 行商品编号为空、目录无效，或商品目录重复。")
-                folders[key] = row["code"]
-                row["folder"] = folder
+                if folder.exists() and skipped.exists():
+                    raise ValueError(f"{row['code']} 的普通目录和「-跳过」目录同时存在，请先核对图片文件夹。")
+                folders.update(keys)
+                row["folder"], row["skipped_folder"] = folder, skipped
             for header in STATUS_HEADERS:
                 if header not in columns:
                     columns[header] = sheet.max_column + 1
@@ -267,19 +272,39 @@ async def collect_images(settings, emit=lambda _event: None, confirm=None, stop_
                 for row in rows:
                     if stop_requested():
                         break
-                    folder = row["folder"]
-                    if settings["resume"] and row["status"] in _FINAL and _has_saved_images(folder, label, row["clear"]):
-                        status = row["status"]
-                        update(row, status, row["clear"], row["note"])
+                    normal, skipped = row["folder"], row["skipped_folder"]
+                    # Publish a new directory under the plain product code only after it qualifies.
+                    folder = normal if normal.is_dir() else skipped
+                    resumed = settings["resume"] and row["status"] in _FINAL and _has_saved_images(folder, label, row["clear"])
+                    if resumed:
+                        status, score, note = row["status"], row["clear"], row["note"]
                     else:
                         update(row, "采集中", note="正在读取商品详情及主图。")
+                        row["folder"] = folder
                         status, score, note = await _collect_product(
                             scraper, session, row, settings, workbook_path, flat, label, limit, confirm
                         )
+                    destination = normal if status == COMPLETE else skipped
+                    renamed = False
+                    if destination != folder and folder.is_dir():
+                        try:
+                            if destination.exists():
+                                raise FileExistsError("目标目录已存在")
+                            folder.rename(destination)
+                            renamed = True
+                        except OSError as error:
+                            resumed = False
+                            status, note = "失败", f"图片目录重命名失败：{error}"
+                    if not resumed:
                         for header, value in zip(STATUS_HEADERS, (status, score, note)):
                             sheet.cell(row["row"], columns[header], value)
-                        save_workbook_atomic(workbook, workbook_path)
-                        update(row, status, score, note)
+                        try:
+                            save_workbook_atomic(workbook, workbook_path)
+                        except Exception:
+                            if renamed and not folder.exists():
+                                destination.rename(folder)
+                            raise
+                    update(row, status, score, note)
                     counts["done" if status == COMPLETE else "rejected" if status == REJECTED else "failed"] += 1
                     emit({"type": "progress", "total": len(rows), **counts, "message": row["code"]})
         finally:

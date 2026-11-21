@@ -368,6 +368,16 @@
       return `"${safe.replaceAll('"', '""')}"`;
     }
 
+    function selectionFilename(now) {
+      let name = Array.from(String(category ?? "").trim().replace(/[<>:"/\\|?*\x00-\x1f]+/g, "_"))
+        .slice(0, 80).join("").replace(/[. ]+$/g, "");
+      if (/^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])\./i.test(name)) name = "_" + name;
+      const pad = (value) => String(value).padStart(2, "0");
+      const date = [now.getFullYear(), pad(now.getMonth() + 1), pad(now.getDate())].join("");
+      const time = [now.getHours(), now.getMinutes(), now.getSeconds()].map(pad).join("");
+      return [name || "未分类", "选中结果", date, time].join("_") + ".csv";
+    }
+
     function downloadSelection() {
       const lines = ["商品 ID,链接,标题"];
       for (const item of items) {
@@ -376,7 +386,7 @@
       const url = URL.createObjectURL(new Blob(["\uFEFF", lines.join("\r\n"), "\r\n"], { type: "text/csv;charset=utf-8" }));
       const link = make("a");
       link.href = url;
-      link.download = "选中结果.csv";
+      link.download = selectionFilename(new Date());
       document.body.append(link);
       link.click();
       link.remove();

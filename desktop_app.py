@@ -370,8 +370,9 @@ class DesktopApp(ctk.CTk):
         for tag, color in (("ok", "#087F5B"), ("warning", "#8A5915"), ("error", "#B42318"), ("working", ACCENT), ("pending", MUTED)):
             self.image_table.tag_configure(tag, foreground=color)
         self.image_table.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=3 if compact else 6)
-        scroll = ttk.Scrollbar(table, orient="vertical", command=self.image_table.yview)
-        scroll.grid(row=0, column=1, sticky="ns", pady=3 if compact else 6)
+        scroll = ctk.CTkScrollbar(table, width=8, height=0, border_spacing=0,
+                                  orientation="vertical", command=self.image_table.yview)
+        scroll.grid(row=0, column=1, sticky="ns", padx=(3, 8), pady=3 if compact else 6)
         self.image_table.configure(yscrollcommand=scroll.set)
 
         footer = ctk.CTkFrame(root, fg_color="transparent")

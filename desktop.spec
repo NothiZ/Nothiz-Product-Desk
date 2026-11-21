@@ -1,9 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
+from runpy import run_path
 import ssl
 from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 root = Path(SPECPATH)
+app_name = run_path(str(root / "desktop_runtime.py"))["APP_TITLE"]
 datas = [(str(root / "build-resources" / "browsers"), "browsers"),
          (str(root / "assets" / "logo.ico"), "assets"),
          (str(root / "assets" / "candidate_wall.html"), "assets"),
@@ -30,7 +32,7 @@ for collection in (a.datas, a.binaries):
     collection[:] = [entry for entry in collection
                      if not Path(entry[0]).as_posix().startswith("playwright/driver/")]
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="ProductDetailsDesktop", debug=False,
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name=app_name, debug=False,
           strip=False, upx=False, console=False, disable_windowed_traceback=False,
           icon=str(root / "assets" / "logo.ico"))
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="ProductDetailsDesktop")
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name=app_name)

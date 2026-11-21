@@ -1,7 +1,6 @@
 <div align="center">
-  <img src="assets/logo.png" alt="产品详情生成 Logo" width="80" />
-  <h1>产品详情生成</h1>
-  <p><strong>Product Details Generation</strong></p>
+  <img src="assets/logo.png" alt="Nothiz Product Desk Logo" width="80" />
+  <h1>Nothiz Product Desk</h1>
   <p>一款 Windows 桌面工具，支持阿里巴巴国际站选品、商品图片采集和中英文详情批量生成。</p>
   <p>
     <strong><a href="https://github.com/NothiZ/Product-Details-Generation-2.0/releases">下载 Windows 版</a></strong><br />
@@ -24,8 +23,8 @@
 
 ## 快速开始
 
-1. 在 [Releases](https://github.com/NothiZ/Product-Details-Generation-2.0/releases) 选择需要的版本，下载 `ProductDetailsDesktop-win-x64.zip`。
-2. 完整解压后运行 `ProductDetailsDesktop.exe`，保留同目录的 `_internal`。首次启动时选择数据存放位置。
+1. 在 [Releases](https://github.com/NothiZ/Product-Details-Generation-2.0/releases) 下载对应版本的 Windows 压缩包。当前构建包名为 `Nothiz Product Desk-win-x64.zip`。
+2. 完整解压后运行 `Nothiz Product Desk.exe`，保留同目录的 `_internal`。首次启动时选择数据存放位置。
 3. 从阿里巴巴国际站选品时，先在「选品搜索」登录，再按下方流程操作。已有商品链接表时，可直接打开「详情生成」。
 4. 生成详情时填写 DeepSeek 或 Gemini API Key，选择模型和模板，然后点击「开始生成」。
 

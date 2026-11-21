@@ -1,12 +1,12 @@
-产品详情生成 · Windows 桌面版
+Nothiz Product Desk
 
 运行环境：Windows 10/11，64 位，需要联网。
 本程序已附带 Python、依赖库和 Chromium，不需要另装 Python 或浏览器。
 
 使用方法
-1. 解压整个 ProductDetailsDesktop 文件夹，双击 ProductDetailsDesktop.exe。
+1. 解压整个 Nothiz Product Desk 文件夹，双击 Nothiz Product Desk.exe。
    请保留旁边的 _internal 文件夹，不要只复制 exe。
-   首次启动时，选择 ProductDetailsDesktop 数据文件夹的存放位置。
+   首次启动时，选择数据文件夹的存放位置。
 2. 在“输入模板.xlsx”的“链接”列填入商品链接，或选择你现有的 Excel 文件。
 3. 程序默认在输入表所在目录生成「输入表名_详情.xlsx」。点击“选择目录”可更改保存位置。
    如果同名输出属于其他输入表，或无法确认归属，请改选保存目录。

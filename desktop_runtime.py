@@ -12,7 +12,7 @@ from itertools import count
 from pathlib import Path
 from tempfile import TemporaryFile
 
-APP_TITLE = "产品详情生成"
+APP_TITLE = "Nothiz Product Desk"
 DEFAULT_PRICE_MULTIPLIER = "1.25"
 _PUBLIC_SETTINGS = ("provider", "model", "template", "input_file", "output_file", "resume", "show_browser",
                     "price_multiplier")

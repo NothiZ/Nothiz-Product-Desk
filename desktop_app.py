@@ -1158,7 +1158,7 @@ def _choose_first_run_data_dir():
     parent.withdraw()
     try:
         while True:
-            selected = filedialog.askdirectory(parent=parent, title="选择 ProductDetailsDesktop 的存放位置",
+            selected = filedialog.askdirectory(parent=parent, title=f"选择 {APP_TITLE} 的数据存放位置",
                                                initialdir=str(Path.home()), mustexist=True)
             if not selected:
                 return False

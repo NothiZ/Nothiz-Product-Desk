@@ -52,6 +52,7 @@ class DesktopUiTests(unittest.TestCase):
         app.destroy()
 
     def test_normal_entrypoint_opens_the_window(self):
+        self.assertEqual(self.app.title(), "Nothiz Product Desk")
         with patch("sys.argv", ["desktop_app.py"]), patch.object(self.module, "DesktopApp", return_value=self.app) as window, patch.object(self.app, "mainloop") as mainloop:
             self.assertEqual(self.module.main(), 0)
         window.assert_called_once_with()

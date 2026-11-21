@@ -14,6 +14,8 @@ $env:PLAYWRIGHT_SKIP_BROWSER_GC = '1'
 $env:PYTHONIOENCODING = 'utf-8'
 # Windows PowerShell 5.1 otherwise replaces piped Chinese source with question marks.
 $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$taskAppName = & $taskPython -c 'from desktop_runtime import APP_TITLE; print(APP_TITLE)'
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($taskAppName)) { throw 'Cannot read the application name.' }
 $taskBrowserRoot = Join-Path $taskRoot 'build-resources\browsers'
 New-Item -ItemType Directory -Path $taskBrowserRoot -Force | Out-Null
 $taskBrowserInfo = & $taskPython -c "import json,pathlib,patchright; p=pathlib.Path(patchright.__file__).parent/'driver/package/browsers.json'; print(json.dumps(json.loads(p.read_text())['browsers']))"
@@ -45,7 +47,7 @@ foreach ($taskName in @('ffmpeg', 'winldd')) {
 }
 & $taskPython -m PyInstaller --noconfirm --clean --distpath $taskDistRoot --workpath (Join-Path $taskRoot 'build\pyinstaller') (Join-Path $taskRoot 'desktop.spec')
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed.' }
-$taskRelease = Join-Path $taskDistRoot 'ProductDetailsDesktop'
+$taskRelease = Join-Path $taskDistRoot $taskAppName
 Copy-Item -LiteralPath (Join-Path $taskRoot 'DESKTOP_USAGE.txt') -Destination (Join-Path $taskRelease '使用说明.txt') -Force
 $env:PD_RELEASE_DIR = $taskRelease
 @'
@@ -66,6 +68,6 @@ w.save(p)
 '@ | & $taskPython -
 if ($LASTEXITCODE -ne 0) { throw 'Input template creation failed.' }
 if (!$SkipZip) {
-    Compress-Archive -LiteralPath $taskRelease -DestinationPath (Join-Path $taskDistRoot 'ProductDetailsDesktop-win-x64.zip') -CompressionLevel Optimal -Force
+    Compress-Archive -LiteralPath $taskRelease -DestinationPath (Join-Path $taskDistRoot ($taskAppName + '-win-x64.zip')) -CompressionLevel Optimal -Force
 }
 Write-Output ('Release: ' + $taskRelease)

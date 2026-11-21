@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from zipfile import ZipFile
 
 from openpyxl import load_workbook
 
@@ -17,7 +18,7 @@ class DesktopBuildTests(unittest.TestCase):
         header = source.split("$taskBrowserRoot =", 1)[0]
         header = header.replace("$taskRoot = $PSScriptRoot", "$taskRoot = '" + str(root).replace("'", "''") + "'")
         tail = source[source.index("$taskRelease = Join-Path"):]
-        setup = "New-Item -ItemType Directory -Path (Join-Path $taskDistRoot 'ProductDetailsDesktop') -Force | Out-Null\n"
+        setup = "New-Item -ItemType Directory -Path (Join-Path $taskDistRoot 'Nothiz Product Desk') -Force | Out-Null\n"
         debug = root / "debug"
         debug.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=debug) as folder:
@@ -29,13 +30,13 @@ class DesktopBuildTests(unittest.TestCase):
             output = folder / "output"
             script_arg = str(script).replace("'", "''")
             output_arg = str(output.relative_to(root)).replace("'", "''")
-            command = f"& ([scriptblock]::Create((Get-Content -LiteralPath '{script_arg}' -Raw))) -SkipZip -OutputRoot '{output_arg}'"
+            command = f"& ([scriptblock]::Create((Get-Content -LiteralPath '{script_arg}' -Raw))) -OutputRoot '{output_arg}'"
             result = subprocess.run(
                 ["powershell.exe", "-NoProfile", "-Command", command],
                 cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             )
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
-            release = output / "ProductDetailsDesktop"
+            release = output / "Nothiz Product Desk"
             self.assertEqual((release / "使用说明.txt").read_bytes(), (root / "DESKTOP_USAGE.txt").read_bytes())
             workbook = load_workbook(release / "输入模板.xlsx", read_only=True)
             try:
@@ -43,3 +44,5 @@ class DesktopBuildTests(unittest.TestCase):
                 self.assertEqual(workbook.active["A1"].value, "链接")
             finally:
                 workbook.close()
+            with ZipFile(output / "Nothiz Product Desk-win-x64.zip") as archive:
+                self.assertIn("Nothiz Product Desk/输入模板.xlsx", archive.namelist())

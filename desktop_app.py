@@ -174,6 +174,7 @@ class DesktopApp(ctk.CTk):
         self.template_var = tk.StringVar(value=next((label for label, value in self.TEMPLATES.items() if value == self.settings.get("template")), list(self.TEMPLATES)[1]))
         self.resume_var = tk.BooleanVar(value=self.settings.get("resume", True))
         self.browser_var = tk.BooleanVar(value=self.settings.get("show_browser", True))
+        self.price_multiplier_var = tk.StringVar(value=self.settings["price_multiplier"])
         search_settings = default_search_settings()
         saved_search = self.settings.get("candidate_search")
         if isinstance(saved_search, dict):
@@ -437,7 +438,11 @@ class DesktopApp(ctk.CTk):
         resume.pack(side="left", padx=(0, 28))
         browser = check(flags, "显示浏览器（便于手动验证）", self.browser_var)
         browser.pack(side="left")
-        self.editable_widgets.extend([(provider, "readonly"), (model, "normal"), (key, "normal"), (remember, "normal"), (template, "readonly"), (resume, "normal"), (browser, "normal")])
+        text(flags, "上架价格倍率", color=MUTED).pack(side="left", padx=(20, 8))
+        multiplier = entry(flags, width=68, textvariable=self.price_multiplier_var, justify="center")
+        multiplier.pack(side="left")
+        self.editable_widgets.extend([(provider, "readonly"), (model, "normal"), (key, "normal"), (remember, "normal"),
+                                      (template, "readonly"), (resume, "normal"), (browser, "normal"), (multiplier, "normal")])
 
         actions = ctk.CTkFrame(root, fg_color="transparent")
         actions.grid(row=6, column=0, sticky="ew", pady=(8 if compact else 14, 0))
@@ -815,6 +820,7 @@ class DesktopApp(ctk.CTk):
         return {**self.settings, "provider": self.current_provider, "model": self.model_var.get().strip(), "models": dict(self.models),
                 "template": self.TEMPLATES[self.template_var.get()], "input_file": self.input_var.get().strip(),
                 "output_file": self.output_var.get().strip(), "resume": self.resume_var.get(),
+                "price_multiplier": self.price_multiplier_var.get().strip(),
                 "show_browser": self.browser_var.get(), "remember_key": self.remember_var.get(),
                 "api_keys": dict(self.keys) if self.remember_var.get() else {},
                 "candidate_search": self.collect_search_settings(), "last_candidate_wall": str(self.wall_path or "")}
@@ -843,6 +849,7 @@ class DesktopApp(ctk.CTk):
             return
         self.input_var.set(settings["input_file"])
         self.output_var.set(settings["output_file"])
+        self.price_multiplier_var.set(settings["price_multiplier"])
         self._start_task(settings, kind="generate", api_key=self.key_var.get())
 
     def start_search(self):

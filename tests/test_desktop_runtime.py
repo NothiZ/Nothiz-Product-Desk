@@ -48,6 +48,16 @@ class DesktopRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "API|Key"):
             runtime.validate_generation(self.settings, "")
 
+    def test_generation_validates_and_serializes_listing_price_multiplier(self):
+        for value, expected in (("", "1.25"), (" 1.50 ", "1.50")):
+            with self.subTest(value=value), patch.object(runtime.subprocess, "Popen"):
+                task = runtime.launch_job({**self.settings, "price_multiplier": value}, api_key="test-secret")
+                payload = json.loads((task.folder / "task.json").read_text(encoding="utf-8"))
+                self.assertEqual(payload["settings"]["price_multiplier"], expected)
+        for value in ("0", "-1", "NaN", "125%"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "上架价格倍率"):
+                runtime.validate_generation({**self.settings, "price_multiplier": value}, "test-secret")
+
     def test_task_file_never_contains_keys_but_worker_environment_does(self):
         self.settings["api_keys"] = {"deepseek": "test-secret"}
         child = MagicMock()

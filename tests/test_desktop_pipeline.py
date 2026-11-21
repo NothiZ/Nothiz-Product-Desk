@@ -24,15 +24,30 @@ class FakeScraper:
 
 
 class DesktopPipelineTests(unittest.IsolatedAsyncioTestCase):
+    def test_listing_price_is_exported_next_to_price_with_currency_and_rounding(self):
+        rows = pd.DataFrame({"采集价格": ["US$10", "CN¥20 - CN¥30", "US$0.10", "USD1,200.40", "100", "面议", ""],
+                             "上架价格": ["旧价格"] * 7, "AI中文标题": ["测试"] * 7})
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "output.xlsx"
+            with patch.object(run, "OUTPUT_FILE", str(target)):
+                run._save(rows, final=True)
+            output = pd.read_excel(target, dtype=str, keep_default_na=False)
+        self.assertEqual(list(output.columns), ["采集价格", "上架价格", "AI中文标题"])
+        self.assertEqual(output["采集价格"].tolist(), rows["采集价格"].tolist())
+        self.assertEqual(output["上架价格"].tolist(),
+                         ["US$12.50", "CN¥25.00 - CN¥37.50", "US$0.13", "USD1500.50", "125.00", "", ""])
+
     async def test_resume_does_not_regenerate_complete_flagged_text(self):
         with tempfile.TemporaryDirectory() as folder:
             source, target = Path(folder)/"input.xlsx", Path(folder)/"output.xlsx"
             url = "https://www.alibaba.com/product-detail/test_1.html"
             pd.DataFrame({"链接":[url]}).to_excel(source,index=False)
-            pd.DataFrame({"链接":[url], "AI中文标题":["淘宝帽子"], "AI英文标题":["Taobao Hat"],
+            pd.DataFrame({"链接":[url], "价格":["US$10"], "上架价格":["US$12.50"],
+                          "AI中文标题":["淘宝帽子"], "AI英文标题":["Taobao Hat"],
                           "AI中文详情":["支持OEM定制"], "AI英文详情":["Supports wholesale orders."],
                           "失败原因":["旧版因指定词标记失败"]}).to_excel(target,index=False)
             with patch.multiple(run, INPUT_FILE=str(source), OUTPUT_FILE=str(target), RESUME=True), \
+                 patch.object(run, "PRICE_MULTIPLIER", "1.50"), \
                  patch.object(run, "Scraper", FakeScraper), \
                  patch.object(run.llm_client, "call_llm", return_value="OK"), \
                  patch.object(FakeScraper, "scrape", new=AsyncMock()) as fetch, \
@@ -43,6 +58,7 @@ class DesktopPipelineTests(unittest.IsolatedAsyncioTestCase):
             generate.assert_not_called()
             output = pd.read_excel(target).iloc[0]
             self.assertEqual(output["AI中文标题"], "淘宝帽子")
+            self.assertEqual(output["上架价格"], "US$15.00")
             self.assertIn("OEM", output.get("需检查", ""))
             self.assertTrue(pd.isna(output["失败原因"]))
 

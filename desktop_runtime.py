@@ -8,13 +8,16 @@ import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from itertools import count
 from pathlib import Path
 from tempfile import TemporaryFile
 
 APP_TITLE = "产品详情生成"
 EVENT_PREFIX = "@@PD_EVENT "
-_PUBLIC_SETTINGS = ("provider", "model", "template", "input_file", "output_file", "resume", "show_browser")
+DEFAULT_PRICE_MULTIPLIER = "1.25"
+_PUBLIC_SETTINGS = ("provider", "model", "template", "input_file", "output_file", "resume", "show_browser",
+                    "price_multiplier")
 IMAGE_MODES = ("常规产品图", "平铺图")
 _DATA_DIR_NAME = "ProductDetailsDesktop"
 _JOB_LABELS = {"search": "选品搜索", "images": "图片采集", "generate": "详情生成", "login": "平台登录"}
@@ -33,6 +36,7 @@ def default_search_settings():
 def default_settings():
     return {"provider": "deepseek", "model": "deepseek-chat", "template": "template2",
             "input_file": "", "output_file": "", "resume": True, "show_browser": True,
+            "price_multiplier": DEFAULT_PRICE_MULTIPLIER,
             "remember_key": False, "api_keys": {},
             "models": {"deepseek": "deepseek-chat", "gemini": "gemini-2.5-flash"},
             "candidate_search": default_search_settings(), "last_candidate_wall": ""}
@@ -171,6 +175,15 @@ def save_settings(settings):
     write_json(user_data_dir() / "settings.json", saved)
 
 
+def parse_price_multiplier(value) -> Decimal:
+    text = str(value).strip() or DEFAULT_PRICE_MULTIPLIER
+    if re.fullmatch(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)", text):
+        multiplier = Decimal(text)
+        if multiplier > 0:
+            return multiplier
+    raise ValueError("上架价格倍率必须是大于 0 的数字，例如 1.25。")
+
+
 def validate_generation(settings, api_key):
     normalized = {**default_settings(), **settings}
     if normalized["provider"] not in ("deepseek", "gemini"):
@@ -181,6 +194,7 @@ def validate_generation(settings, api_key):
         raise ValueError("请先填写当前服务的 API Key。")
     if not str(normalized.get("model", "")).strip():
         raise ValueError("请填写模型名称。")
+    normalized["price_multiplier"] = format(parse_price_multiplier(normalized["price_multiplier"]), "f")
     if not str(normalized.get("input_file", "")).strip():
         raise ValueError("请选择输入 Excel 文件。")
     if not str(normalized.get("output_file", "")).strip():

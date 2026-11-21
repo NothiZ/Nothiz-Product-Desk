@@ -2,13 +2,16 @@
 """主入口：抓取（浏览器标签页并发）与 AI 生成（线程池）并行流水线，支持断点续跑。"""
 import asyncio
 import os
+import re
 import sys
+from decimal import Decimal, DecimalException, ROUND_HALF_UP
 from pathlib import Path
 
 import pandas as pd
 
 import llm_client
 from ai_writer import ContentGenerationError, TitleDedupe, find_review_terms, generate_content
+from desktop_runtime import DEFAULT_PRICE_MULTIPLIER, parse_price_multiplier
 from scraper import Scraper, validate_product_url
 
 # ═══════════════════════════ 配置 ═══════════════════════════
@@ -16,6 +19,7 @@ PROVIDER = "deepseek"            # "deepseek" | "gemini"
 DESC_TEMPLATE = "template2"      # "template1"（Key: Value 列表）| "template2"（Details + Specifications）
 INPUT_FILE = "products.xlsx"
 OUTPUT_FILE = "products_output.xlsx"
+PRICE_MULTIPLIER = DEFAULT_PRICE_MULTIPLIER
 RESUME = True                    # 已有输出文件时跳过已生成的行；想全部重跑：设为 False 或删除输出文件
 SAVE_EVERY = 5                   # 每完成 N 条保存一次
 HEADLESS = False                 # False 才能在淘宝弹出滑块时手动验证；纯阿里可设 True
@@ -25,9 +29,13 @@ ENABLE_DEBUG_COLS = False        # 是否写入抓取调试列
 # ═════════════════════════════════════════════════════════════
 
 AI_COLUMNS = {"AI中文标题": "title_cn", "AI英文标题": "title_en", "AI中文详情": "desc_cn", "AI英文详情": "desc_en"}
-RESULT_COLS = ["价格", *AI_COLUMNS, "颜色", "尺寸", "其他规格", "需检查", "失败原因"]
+RESULT_COLS = ["采集价格", *AI_COLUMNS, "颜色", "尺寸", "其他规格", "需检查", "失败原因"]
 DEBUG_COLS = {"最终URL": "final_url", "页面标题(原始)": "page_title_raw", "页面标题(清洗)": "title",
               "抓取关键词": "url_keywords", "抓取文本(片段)": "description", "抓取文本(原始片段)": "description_raw"}
+_LISTING_AMOUNT = re.compile(
+    r"(US\$|(?:CNY|CN)[¥￥]|[¥￥$€£]|[A-Z]{3})?\s*((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?)",
+    re.IGNORECASE,
+)
 
 
 def _detect_url_column(df: pd.DataFrame) -> str:
@@ -42,6 +50,8 @@ def _detect_url_column(df: pd.DataFrame) -> str:
 
 def _load() -> tuple[pd.DataFrame, str]:
     df = pd.read_excel(INPUT_FILE).drop(columns=["图片"], errors="ignore")
+    if "采集价格" not in df.columns:
+        df = df.rename(columns={"价格": "采集价格"})
     if "采集状态" in df.columns:
         df = df.loc[df["采集状态"].astype("string").str.strip().eq("已完成").fillna(False)].reset_index(drop=True)
     url_col = _detect_url_column(df)
@@ -52,6 +62,8 @@ def _load() -> tuple[pd.DataFrame, str]:
         df[c] = df[c].astype("string").fillna("")  # 避免 pandas 把空列推断成 float
     if RESUME and os.path.exists(OUTPUT_FILE):  # 按链接逐行复用上次结果：增删、改动、调整顺序都不影响
         old = pd.read_excel(OUTPUT_FILE)
+        if "采集价格" not in old.columns:
+            old = old.rename(columns={"价格": "采集价格"})
         if url_col in old.columns and "AI中文标题" in old.columns:
             keep = old["AI中文标题"].fillna("").astype(str).str.strip() != ""
             if "失败原因" in old.columns:
@@ -81,7 +93,36 @@ def _load() -> tuple[pd.DataFrame, str]:
     return df, url_col
 
 
+def _listing_price(price, multiplier: Decimal) -> str:
+    parts = re.split(r"\s*(?:[-–—~～]|至)\s*", str(price).strip())
+    if len(parts) > 2:
+        return ""
+    amounts = []
+    currencies = set()
+    for part in parts:
+        match = _LISTING_AMOUNT.fullmatch(part)
+        if match is None:
+            return ""
+        currency, amount = match.groups()
+        if currency:
+            currencies.add(currency.upper())
+        amounts.append(Decimal(amount.replace(",", "")))
+    if len(currencies) > 1:
+        return ""
+    currency = currencies.pop() if currencies else ""
+    try:
+        return " - ".join(f"{currency}{(amount * multiplier).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):f}"
+                          for amount in amounts)
+    except DecimalException:
+        return ""
+
+
 def _save(df: pd.DataFrame, final: bool = False) -> str | None:
+    if "采集价格" in df.columns:
+        multiplier = parse_price_multiplier(PRICE_MULTIPLIER)
+        df = df.drop(columns=["上架价格"], errors="ignore")
+        df.insert(df.columns.get_loc("采集价格") + 1, "上架价格",
+                  df["采集价格"].map(lambda price: _listing_price(price, multiplier)))
     try:
         df.to_excel(OUTPUT_FILE, index=False)
         return OUTPUT_FILE
@@ -96,7 +137,7 @@ def _save(df: pd.DataFrame, final: bool = False) -> str | None:
 
 
 def _fill_row(df: pd.DataFrame, idx, product: dict, ai: dict) -> None:
-    row = {"价格": product["price"], **{col: ai[key] for col, key in AI_COLUMNS.items()},
+    row = {"采集价格": product["price"], **{col: ai[key] for col, key in AI_COLUMNS.items()},
            **{c: product["variants"].get(c, "") for c in ("颜色", "尺寸", "其他规格")},
            "需检查": "、".join(find_review_terms(ai)), "失败原因": ""}
     if ENABLE_DEBUG_COLS:

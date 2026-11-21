@@ -12,7 +12,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from desktop_runtime import configure_browser_path, resource_dir, write_json
+from desktop_runtime import DEFAULT_PRICE_MULTIPLIER, configure_browser_path, resource_dir, write_json
 
 
 async def _generate(settings, folder, emit):
@@ -20,6 +20,7 @@ async def _generate(settings, folder, emit):
 
     run.PROVIDER = settings["provider"]
     run.DESC_TEMPLATE = settings["template"]
+    run.PRICE_MULTIPLIER = settings.get("price_multiplier", DEFAULT_PRICE_MULTIPLIER)
     run.INPUT_FILE = settings["input_file"]
     run.OUTPUT_FILE = settings["output_file"]
     run.RESUME = bool(settings["resume"])

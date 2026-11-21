@@ -14,7 +14,7 @@
 
 **简体中文** · [English](README.en.md)
 
-[**下载 Windows 版**](https://github.com/NothiZ/Product-Details-Generation-2.0/releases) ·
+[**下载 Windows 版**](https://github.com/NothiZ/Product-Details-Generation-2.0/releases/download/v2.1.0/Nothiz.Product.Desk-win-x64.zip) ·
 [快速开始](#quick-start) ·
 [使用流程](#workflow) ·
 [支持平台](#supported-platforms) ·

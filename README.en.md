@@ -14,7 +14,7 @@ Alibaba.com sourcing · product image collection with sharpness checks · biling
 
 [简体中文](README.md) · **English**
 
-[**Download for Windows**](https://github.com/NothiZ/Product-Details-Generation-2.0/releases) ·
+[**Download for Windows**](https://github.com/NothiZ/Product-Details-Generation-2.0/releases/download/v2.1.0/Nothiz.Product.Desk-win-x64.zip) ·
 [Quick start](#quick-start) ·
 [Workflow](#workflow) ·
 [Supported platforms](#supported-platforms) ·

@@ -4,14 +4,20 @@ import asyncio
 import os
 import re
 import sys
+from contextlib import ExitStack, contextmanager
 from decimal import Decimal, DecimalException, ROUND_HALF_UP
+from hashlib import sha256
+from itertools import count
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.packaging.custom import StringProperty
 
 import llm_client
 from ai_writer import ContentGenerationError, TitleDedupe, find_review_terms, generate_content
-from desktop_runtime import DEFAULT_PRICE_MULTIPLIER, parse_price_multiplier
+from desktop_runtime import DEFAULT_PRICE_MULTIPLIER, parse_price_multiplier, workbook_write_lock
 from scraper import Scraper, validate_product_url
 
 # ═══════════════════════════ 配置 ═══════════════════════════
@@ -29,6 +35,7 @@ LLM_WORKERS = 3                  # 同时进行的 AI 请求数（Gemini 免费�
 
 AI_COLUMNS = {"AI中文标题": "title_cn", "AI英文标题": "title_en", "AI中文详情": "desc_cn", "AI英文详情": "desc_en"}
 RESULT_COLS = ["采集价格", *AI_COLUMNS, "颜色", "尺寸", "其他规格", "需检查", "失败原因"]
+_SOURCE_PROPERTY = "ProductDetailsInputPathHash"
 _LISTING_AMOUNT = re.compile(
     r"(US\$|(?:CNY|CN)[¥￥]|[¥￥$€£]|[A-Z]{3})?\s*((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?)",
     re.IGNORECASE,
@@ -45,8 +52,8 @@ def _detect_url_column(df: pd.DataFrame) -> str:
     raise RuntimeError("未能识别出链接列：请确保有“链接/URL/Link”等列名，或该列内容以 http(s) 开头。")
 
 
-def _load() -> tuple[pd.DataFrame, str]:
-    df = pd.read_excel(INPUT_FILE)
+def _load(source=None, target=None) -> tuple[pd.DataFrame, str]:
+    df = pd.read_excel(INPUT_FILE if source is None else source)
     if "采集状态" in df.columns:
         df = df.loc[df["采集状态"].astype("string").str.strip().eq("已完成").fillna(False)].reset_index(drop=True)
     url_col = _detect_url_column(df)
@@ -54,8 +61,9 @@ def _load() -> tuple[pd.DataFrame, str]:
         if c not in df.columns:
             df[c] = ""
         df[c] = df[c].astype("string").fillna("")  # 避免 pandas 把空列推断成 float
-    if RESUME and os.path.exists(OUTPUT_FILE):  # 按链接逐行复用上次结果：增删、改动、调整顺序都不影响
-        old = pd.read_excel(OUTPUT_FILE)
+    target = OUTPUT_FILE if target is None else target
+    if RESUME and os.path.exists(target):  # 按链接逐行复用上次结果：增删、改动、调整顺序都不影响
+        old = pd.read_excel(target)
         if url_col in old.columns and "AI中文标题" in old.columns:
             keep = old["AI中文标题"].astype("string").fillna("").str.strip() != ""
             if "失败原因" in old.columns:
@@ -109,23 +117,71 @@ def _listing_price(price, multiplier: Decimal) -> str:
         return ""
 
 
-def _save(df: pd.DataFrame, final: bool = False) -> str | None:
+def _source_id(source: Path) -> str:
+    return sha256(os.fsencode(os.path.normcase(source))).hexdigest()
+
+
+@contextmanager
+def _output_lock(target: Path):
+    with ExitStack() as stack:
+        try:
+            stack.enter_context(workbook_write_lock(target))
+        except OSError as error:
+            raise OSError(f"无法锁定详情输出文件，请确认目录可写且没有其他任务正在使用。\n{target}") from error
+        yield
+
+
+def _can_write_output(target: Path, source_id: str) -> bool:
+    try:
+        with target.open("rb") as stream:
+            workbook = load_workbook(stream, read_only=True)
+            try:
+                return workbook.custom_doc_props[_SOURCE_PROPERTY].value == source_id
+            finally:
+                workbook.close()
+    except FileNotFoundError:
+        return True
+    except Exception:
+        # An unreadable or unmarked workbook cannot establish ownership.
+        return False
+
+
+def _write_output(df: pd.DataFrame, target: Path, source_id: str) -> None:
+    stream = NamedTemporaryFile(dir=target.parent, suffix=".tmp", delete=False)
+    temporary = Path(stream.name)
+    try:
+        with stream, pd.ExcelWriter(stream, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False)
+            writer.book.custom_doc_props.append(StringProperty(name=_SOURCE_PROPERTY, value=source_id))
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _save(df: pd.DataFrame, target: Path, source_id: str, final: bool = False) -> str | None:
     if "采集价格" in df.columns:
         multiplier = parse_price_multiplier(PRICE_MULTIPLIER)
         df = df.drop(columns=["上架价格"], errors="ignore")
         df.insert(df.columns.get_loc("采集价格") + 1, "上架价格",
                   df["采集价格"].map(lambda price: _listing_price(price, multiplier)))
     try:
-        df.to_excel(OUTPUT_FILE, index=False)
-        return OUTPUT_FILE
+        _write_output(df, target, source_id)
+        return str(target)
     except PermissionError:
-        print(f"⚠ 无法写入 {OUTPUT_FILE}（被 Excel 占用？）。" + ("" if not final else "已改存备份文件。"))
-        if final:
-            target = Path(OUTPUT_FILE)
-            backup = str(target.with_name(target.stem + "_backup" + target.suffix))
-            df.to_excel(backup, index=False)
-            return backup
-    return None
+        print(f"⚠ 无法写入 {target}（被 Excel 占用？）。")
+        if not final:
+            return None
+    for number in count(1):
+        suffix = "_backup" if number == 1 else f"_backup_{number}"
+        backup = target.with_name(f"{target.stem}{suffix}{target.suffix}")
+        if os.path.lexists(backup):
+            continue
+        with _output_lock(backup):
+            if os.path.lexists(backup):
+                continue
+            _write_output(df, backup, source_id)
+            print(f"已改存备份文件：{backup}")
+            return str(backup)
 
 
 def _fill_row(df: pd.DataFrame, idx, product: dict, ai: dict) -> None:
@@ -137,12 +193,24 @@ def _fill_row(df: pd.DataFrame, idx, product: dict, ai: dict) -> None:
 
 
 async def main(progress=None, stop_event=None) -> dict:
+    source, target = Path(INPUT_FILE).resolve(), Path(OUTPUT_FILE).resolve()
+    source_id = _source_id(source)
+    # Hold the lock from the ownership check through the final save, even when no output exists yet.
+    with _output_lock(target):
+        if source == target or (target.exists() and source.is_file() and source.samefile(target)):
+            raise RuntimeError("输入和输出不能是同一个文件，请另选输出位置。")
+        if not _can_write_output(target, source_id):
+            raise RuntimeError(f"目标详情文件已存在，无法确认它属于当前输入文件。请选择其他输出目录，或先备份并移走现有文件。\n{target}")
+        return await _run(source, target, source_id, progress, stop_event)
+
+
+async def _run(source, target, source_id, progress, stop_event) -> dict:
+    df, url_col = _load(source, target)
     llm_client.set_provider(PROVIDER)
     try:
         await asyncio.to_thread(llm_client.call_llm, "只回复 OK")
     except Exception as e:
         sys.exit(f"❌ AI 接口不可用：{e}")
-    df, url_col = _load()
     todo = [(i, str(u).strip()) for i, u in df[url_col].items()
             if pd.notna(u) and str(u).strip()
             and (not df.at[i, "AI中文标题"].strip() or df.at[i, "失败原因"].strip())]
@@ -157,7 +225,7 @@ async def main(progress=None, stop_event=None) -> dict:
         # Failed drafts need the same checkpoints as accepted results.
         processed = done + failed
         if processed and processed % SAVE_EVERY == 0:
-            if _save(df):
+            if _save(df, target, source_id):
                 print(f"  → 已保存（本次处理 {processed} 条）")
 
     def stopped():
@@ -200,7 +268,7 @@ async def main(progress=None, stop_event=None) -> dict:
         async with Scraper(headless=HEADLESS, concurrency=SCRAPE_CONCURRENCY, stop_event=stop_event) as sc:
             await asyncio.gather(*(handle(sc, i, u) for i, u in todo))
     finally:  # 即使 Ctrl+C 中断也保存已完成的部分
-        saved_path = _save(df, final=True)
+        saved_path = _save(df, target, source_id, final=True)
     status = "stopped" if stopped() else "finished"
     print(f"\n{'已停止' if stopped() else '完成'}：成功 {done} 条，失败 {failed} 条，已写入 {saved_path}")
     return {"status": status, "total": len(todo), "done": done, "failed": failed, "output_file": saved_path}

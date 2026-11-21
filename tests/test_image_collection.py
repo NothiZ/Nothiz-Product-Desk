@@ -46,6 +46,32 @@ class ImageCollectionTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(_has_saved_images(folder, "1 / 1"))
             self.assertFalse(_has_saved_images(folder, "2 / 2"))
 
+    async def test_image_destination_cannot_be_reused_by_another_workbook(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "shared"
+            first, second = (root / name / "选品结果.xlsx" for name in ("first", "second"))
+            for workbook, url in ((first, LINK), (second, LINK.replace("8059", "8058"))):
+                workbook.parent.mkdir()
+                book = Workbook()
+                book.active.append(["商品编号", "分类名", "链接"])
+                book.active.append(["SP01", "Category", url])
+                book.save(workbook)
+                book.close()
+
+            async def download(_scraper, _session, row, *_args):
+                row["folder"].mkdir(parents=True, exist_ok=True)
+                (row["folder"] / "01.jpg").write_bytes(row["url"].encode())
+                return "已完成", "1 / 1", ""
+
+            settings = {"output_dir": str(output), "show_browser": False}
+            with patch("image_collection._collect_product", new=AsyncMock(side_effect=download)) as collect:
+                await collect_images({**settings, "input_file": str(first)})
+                with self.assertRaisesRegex(ValueError, "另一份选品表"):
+                    await collect_images({**settings, "input_file": str(second)})
+                collect.assert_awaited_once()
+            self.assertEqual((output / "Category" / "SP01" / "01.jpg").read_bytes(), LINK.encode())
+
     async def test_collects_only_task_rows_saves_photos_and_resumes_terminal_rows(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -76,7 +102,7 @@ class ImageCollectionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(saved.format, "JPEG")
             book = load_workbook(input_file)
             try:
-                self.assertEqual([cell.value for cell in book.active[1]][-3:], ["采集状态", "清晰图数", "说明"])
+                self.assertEqual([cell.value for cell in book.active[1]][4:7], ["采集状态", "清晰图数", "说明"])
                 self.assertEqual([book.active["D2"].value, book.active["E2"].value, book.active["E3"].value],
                                  ["常规产品图", "已完成", "需登录"])
             finally:
@@ -90,6 +116,20 @@ class ImageCollectionTests(unittest.IsolatedAsyncioTestCase):
             with patch("image_collection.Scraper.fetch_product", new=AsyncMock(return_value=("需登录", ""))), \
                     patch("image_collection.image_responses", return_value=iter([(data.getvalue(), picture_url)])):
                 await collect_images(settings)
+            self.assertTrue(photo.is_file())
+            with patch("image_collection.Scraper.fetch_product", new=AsyncMock(return_value=("需登录", ""))), \
+                    patch("image_collection.image_responses", side_effect=lambda *_: iter([(data.getvalue(), picture_url)])):
+                result = await collect_images({**settings, "min_clear": 2})
+                self.assertEqual(result["rejected"], 1)
+                result = await collect_images({**settings, "min_clear": 2, "min_side": 1000})
+                self.assertEqual(result["rejected"], 1)
+                book = load_workbook(input_file)
+                try:
+                    self.assertEqual(book.active["F2"].value, "0 / 1")
+                finally:
+                    book.close()
+                result = await collect_images(settings)
+                self.assertEqual(result["done"], 1)
             self.assertTrue(photo.is_file())
 
     async def test_unsuccessful_photo_folders_are_marked_and_recovered_on_retry(self):

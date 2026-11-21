@@ -24,13 +24,105 @@ class FakeScraper:
 
 
 class DesktopPipelineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_shared_output_rejects_a_different_input_even_with_the_same_links(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            first, second = root / "first" / "products.xlsx", root / "second" / "products.xlsx"
+            target = root / "products_详情.xlsx"
+            for source in (first, second):
+                source.parent.mkdir()
+                pd.DataFrame({"链接": ["https://www.alibaba.com/product-detail/test_1.html"]}).to_excel(source, index=False)
+            with patch.multiple(run, INPUT_FILE=str(first), OUTPUT_FILE=str(target), RESUME=False), \
+                 patch.object(run, "Scraper", FakeScraper), \
+                 patch.object(run.llm_client, "call_llm", return_value="OK") as probe, \
+                 patch.object(run, "generate_content", return_value={
+                     "title_cn": "帽子", "title_en": "Hat", "desc_cn": "材质：棉布", "desc_en": "Material: Cotton",
+                 }):
+                self.assertEqual((await run.main())["done"], 1)
+                original = target.read_bytes()
+                probe.reset_mock()
+                with patch.object(run, "INPUT_FILE", str(second)):
+                    for resume in (False, True):
+                        with self.subTest(resume=resume), patch.object(run, "RESUME", resume):
+                            with self.assertRaisesRegex(RuntimeError, "当前输入文件"):
+                                await run.main()
+                probe.assert_not_called()
+                self.assertEqual(target.read_bytes(), original)
+                self.assertEqual((await run.main())["done"], 1)
+
+    async def test_existing_unmarked_output_is_preserved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source, target = Path(folder) / "input.xlsx", Path(folder) / "output.xlsx"
+            rows = pd.DataFrame({"链接": ["https://www.alibaba.com/product-detail/test_1.html"]})
+            for path in (source, target):
+                rows.to_excel(path, index=False)
+            original = target.read_bytes()
+            with patch.multiple(run, INPUT_FILE=str(source), OUTPUT_FILE=str(target), RESUME=False), \
+                 patch.object(run, "Scraper", FakeScraper), \
+                 patch.object(run.llm_client, "call_llm", return_value="OK") as probe:
+                with self.assertRaisesRegex(RuntimeError, "当前输入文件"):
+                    await run.main()
+            probe.assert_not_called()
+            self.assertEqual(target.read_bytes(), original)
+
+    async def test_concurrent_main_cannot_claim_the_same_output_before_the_first_save(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source, other, target = (Path(folder) / name for name in ("input.xlsx", "other.xlsx", "output.xlsx"))
+            for path in (source, other):
+                pd.DataFrame({"链接": []}).to_excel(path, index=False)
+            entered, release = asyncio.Event(), asyncio.Event()
+
+            class PausedScraper(FakeScraper):
+                async def __aenter__(self):
+                    entered.set()
+                    await release.wait()
+                    return self
+
+            with patch.multiple(run, INPUT_FILE=str(source), OUTPUT_FILE=str(target), RESUME=False), \
+                 patch.object(run, "Scraper", PausedScraper), \
+                 patch.object(run.llm_client, "call_llm", return_value="OK") as probe:
+                first = asyncio.create_task(run.main())
+                try:
+                    await asyncio.wait_for(entered.wait(), timeout=3)
+                    self.assertFalse(target.exists())
+                    with patch.object(run, "INPUT_FILE", str(other)):
+                        with self.assertRaisesRegex(OSError, "详情输出"):
+                            await asyncio.wait_for(run.main(), timeout=1)
+                finally:
+                    release.set()
+                    self.assertEqual((await first)["status"], "finished")
+            probe.assert_called_once()
+
+    async def test_locked_output_uses_a_numbered_backup_when_another_workbook_occupies_the_first(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            source, target, occupied = (root / name for name in ("input.xlsx", "RESULT.XLSX", "RESULT_backup.XLSX"))
+            pd.DataFrame({"链接": []}).to_excel(source, index=False)
+            pd.DataFrame({"数据": ["另一任务"]}).to_excel(occupied, engine="openpyxl", index=False)
+            original = occupied.read_bytes()
+            replace = Path.replace
+
+            def replace_unless_locked(path, destination):
+                if destination == target:
+                    raise PermissionError("Excel locked the primary output")
+                return replace(path, destination)
+
+            with patch.multiple(run, INPUT_FILE=str(source), OUTPUT_FILE=str(target), RESUME=False), \
+                 patch.object(run, "Scraper", FakeScraper), \
+                 patch.object(run.llm_client, "call_llm", return_value="OK"), \
+                 patch.object(Path, "replace", autospec=True, side_effect=replace_unless_locked):
+                result = await run.main()
+            backup = Path(result["output_file"])
+            self.assertEqual(backup, target.with_name("RESULT_backup_2.XLSX"))
+            self.assertIn("链接", pd.read_excel(backup).columns)
+            self.assertEqual(occupied.read_bytes(), original)
+
     def test_listing_price_is_exported_next_to_price_with_currency_and_rounding(self):
         rows = pd.DataFrame({"采集价格": ["US$10", "CN¥20 - CN¥30", "US$0.10", "USD1,200.40", "100", "面议", ""],
                              "上架价格": ["旧价格"] * 7, "AI中文标题": ["测试"] * 7})
         with tempfile.TemporaryDirectory() as folder:
             target = Path(folder) / "output.xlsx"
-            with patch.object(run, "OUTPUT_FILE", str(target)):
-                run._save(rows, final=True)
+            run._save(rows, target, "test-input", final=True)
             output = pd.read_excel(target, dtype=str, keep_default_na=False)
         self.assertEqual(list(output.columns), ["采集价格", "上架价格", "AI中文标题"])
         self.assertEqual(output["采集价格"].tolist(), rows["采集价格"].tolist())
@@ -42,9 +134,10 @@ class DesktopPipelineTests(unittest.IsolatedAsyncioTestCase):
             source, target = Path(folder)/"input.xlsx", Path(folder)/"output.xlsx"
             url = "https://www.alibaba.com/product-detail/test_1.html"
             pd.DataFrame({"链接":[url]}).to_excel(source,index=False)
-            pd.DataFrame({"链接":[url], "采集价格":["US$10"], "上架价格":["US$12.50"],
-                          "AI中文标题":["淘宝帽子"], "AI英文标题":["Taobao Hat"],
-                          "AI中文详情":["支持OEM定制"], "AI英文详情":["Supports wholesale orders."]}).to_excel(target,index=False)
+            previous = pd.DataFrame({"链接":[url], "采集价格":["US$10"], "上架价格":["US$12.50"],
+                                     "AI中文标题":["淘宝帽子"], "AI英文标题":["Taobao Hat"],
+                                     "AI中文详情":["支持OEM定制"], "AI英文详情":["Supports wholesale orders."]})
+            run._write_output(previous, target, run._source_id(source.resolve()))
             with patch.multiple(run, INPUT_FILE=str(source), OUTPUT_FILE=str(target), RESUME=True), \
                  patch.object(run, "PRICE_MULTIPLIER", "1.50"), \
                  patch.object(run, "Scraper", FakeScraper), \
@@ -91,9 +184,10 @@ class DesktopPipelineTests(unittest.IsolatedAsyncioTestCase):
             source, target = Path(folder)/"input.xlsx", Path(folder)/"output.xlsx"
             url = "https://www.alibaba.com/product-detail/test_1.html"
             pd.DataFrame({"链接":[url]}).to_excel(source,index=False)
-            pd.DataFrame({"链接":[url], "AI中文标题":["待补全帽子"], "AI英文标题":["Hat"],
-                          "AI中文详情":["材质：棉布"], "AI英文详情":[""],
-                          "失败原因":["上次缺少英文详情"]}).to_excel(target,index=False)
+            previous = pd.DataFrame({"链接":[url], "AI中文标题":["待补全帽子"], "AI英文标题":["Hat"],
+                                     "AI中文详情":["材质：棉布"], "AI英文详情":[""],
+                                     "失败原因":["上次缺少英文详情"]})
+            run._write_output(previous, target, run._source_id(source.resolve()))
             response = "ChineseTitle: 棉布帽子\nChineseDescription: 材质：棉布\nEnglishTitle: Hat\nEnglishDescription: Material: Cotton"
             with patch.multiple(run, INPUT_FILE=str(source), OUTPUT_FILE=str(target), RESUME=True, DESC_TEMPLATE="template1"), \
                  patch.object(run, "Scraper", FakeScraper), \
@@ -209,7 +303,7 @@ class DesktopPipelineTests(unittest.IsolatedAsyncioTestCase):
                  patch.object(run, "generate_content", return_value=ai):
                 result = await run.main(progress=events.append, stop_event=asyncio.Event())
             self.assertEqual((result["done"],result["failed"]), (1,0))
-            self.assertEqual(result["output_file"], str(target))
+            self.assertEqual(Path(result["output_file"]), target.resolve())
             self.assertTrue(any(e["done"] == 1 and e["total"] == 1 for e in events))
             output=pd.read_excel(target)
             self.assertEqual(output.loc[0,"颜色"],"Pink")
@@ -268,19 +362,6 @@ class DesktopLoginTests(unittest.TestCase):
         with patch.object(login, "StealthySession", return_value=session), patch.object(login,"login_state_path",return_value=Path("alibaba_state.json"),create=True):
             self.assertIs(login.login("alibaba", confirm=lambda _: "n"), False)
         session.save_state.assert_not_called()
-
-    def test_excel_lock_reports_actual_backup_path(self):
-        df=MagicMock()
-        df.to_excel.side_effect=[PermissionError("locked"),None]
-        with patch.object(run,"OUTPUT_FILE","result.xlsx"):
-            self.assertEqual(run._save(df,final=True),"result_backup.xlsx")
-
-    def test_backup_handles_uppercase_extension_and_dotted_directory(self):
-        df=MagicMock()
-        df.to_excel.side_effect=[PermissionError("locked"),None]
-        with patch.object(run,"OUTPUT_FILE","data.xlsx/RESULT.XLSX"):
-            self.assertEqual(Path(run._save(df,final=True)),Path("data.xlsx/RESULT_backup.XLSX"))
-
 
 class ContentReviewResumeTests(unittest.TestCase):
     def test_unsupported_url_remains_a_true_failure_even_with_complete_text(self):

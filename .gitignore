@@ -36,6 +36,8 @@ settings.json.tmp
 task.json
 result.json
 response-*.json
+.image-task.json
+.image-task.lock
 /jobs/
 /ProductDetailsDesktop/
 

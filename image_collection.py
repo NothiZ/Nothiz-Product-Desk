@@ -3,6 +3,9 @@
 import argparse
 import asyncio
 import hashlib
+import json
+import os
+from contextlib import ExitStack
 from io import BytesIO
 from pathlib import Path
 import re
@@ -15,10 +18,11 @@ from PIL import Image, ImageOps
 import requests
 
 from candidate_wall import _trusted_url, image_responses, inspect_image, larger_image_url
-from desktop_runtime import IMAGE_MODES, configure_browser_path, save_workbook_atomic, validate_image_settings, workbook_write_lock
+from desktop_runtime import (IMAGE_MODES, configure_browser_path, save_workbook_atomic, validate_image_settings,
+                             workbook_write_lock, write_json)
 from scraper import Scraper, product_payloads, validate_product_url
 
-STATUS_HEADERS = ("采集状态", "清晰图数", "说明")
+STATUS_HEADERS = ("采集状态", "清晰图数", "说明", "判定条件")
 COMPLETE = "已完成"
 REJECTED = "已淘汰"
 _FINAL = (COMPLETE, REJECTED)
@@ -124,7 +128,8 @@ def _selection_rows(sheet):
         if not any(cells):
             continue
         rows.append({"row": index, "code": value("商品编号"), "category": value("分类名"), "url": value("链接"),
-                     "mode": value("图片模式"), "status": value("采集状态"), "clear": value("清晰图数"), "note": value("说明")})
+                     "mode": value("图片模式"), "status": value("采集状态"), "clear": value("清晰图数"),
+                     "note": value("说明"), "criteria": value("判定条件")})
     return columns, rows
 
 
@@ -226,12 +231,27 @@ def _has_saved_images(folder, score):
     return all((folder / f"{number:02d}.jpg").is_file() for number in range(1, int(count) + 1))
 
 
+def _claim_image_directory(workbook_path, owner_file):
+    owner = os.path.normcase(str(workbook_path))
+    if owner_file.exists():
+        if json.loads(owner_file.read_text(encoding="utf-8")) != owner:
+            raise ValueError("此图片目录已用于另一份选品表，请为本次任务选择独立的保存目录。")
+        return
+    output = owner_file.parent
+    task_directory = (workbook_path.name == "选品结果.xlsx" and output == workbook_path.parent / "图片"
+                      and (workbook_path.parent / "candidate_manifest.json").is_file())
+    if not task_directory and any(path != owner_file.with_suffix(".lock") for path in output.iterdir()):
+        raise ValueError("此图片目录已有文件且无法确认所属任务，请选择一个空目录。")
+    write_json(owner_file, owner)
+
+
 async def collect_images(settings, emit=lambda _event: None, confirm=None, stop_requested=lambda: False):
     settings = validate_image_settings(settings)
     workbook_path = Path(settings["input_file"])
     output = Path(settings["output_dir"])
     flat = settings["mode"] == IMAGE_MODES[1]
     label, limit = ("候选", 8) if flat else ("主图", 5)
+    criteria = f"{settings['min_clear']} 张 / {settings['min_side']} 像素"
     result_headers = ("图片模式", *STATUS_HEADERS)
     counts = {"done": 0, "rejected": 0, "failed": 0}
     configure_browser_path()
@@ -240,13 +260,18 @@ async def collect_images(settings, emit=lambda _event: None, confirm=None, stop_
         row.update(status=status, clear=clear, note=note)
         emit({"type": "image_row", **{key: row[key] for key in ("row", "code", "status", "clear", "note")}})
 
-    with workbook_write_lock(workbook_path), requests.Session() as session:
+    with workbook_write_lock(workbook_path), requests.Session() as session, ExitStack() as output_lock:
         workbook = load_workbook(workbook_path)
         try:
             sheet = workbook.active
             columns, rows = _selection_rows(sheet)
             if not rows:
                 raise ValueError("选品结果表没有需要采集的商品。")
+            output.mkdir(parents=True, exist_ok=True)
+            owner_file = output / ".image-task.json"
+            # Separate workbooks can target the same directory from different worker processes.
+            output_lock.enter_context(workbook_write_lock(owner_file))
+            _claim_image_directory(workbook_path, owner_file)
             folders = set()
             for row in rows:
                 code = _folder_name(row["code"], "")
@@ -277,7 +302,8 @@ async def collect_images(settings, emit=lambda _event: None, confirm=None, stop_
                     # Publish a new directory under the plain product code only after it qualifies.
                     folder = normal if normal.is_dir() else skipped
                     resumed = (settings["resume"] and row["status"] in _FINAL
-                               and row["mode"] == settings["mode"] and _has_saved_images(folder, row["clear"]))
+                               and row["mode"] == settings["mode"] and row["criteria"] == criteria
+                               and _has_saved_images(folder, row["clear"]))
                     if resumed:
                         status, score, note = row["status"], row["clear"], row["note"]
                     else:
@@ -298,7 +324,7 @@ async def collect_images(settings, emit=lambda _event: None, confirm=None, stop_
                             resumed = False
                             status, note = "失败", f"图片目录重命名失败：{error}"
                     if not resumed:
-                        for header, value in zip(result_headers, (settings["mode"], status, score, note)):
+                        for header, value in zip(result_headers, (settings["mode"], status, score, note, criteria)):
                             sheet.cell(row["row"], columns[header], value)
                         try:
                             save_workbook_atomic(workbook, workbook_path)

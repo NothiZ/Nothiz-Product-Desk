@@ -132,6 +132,16 @@ class DesktopUiTests(unittest.TestCase):
         self.assertIn("已选择 saved.xlsx", restarted.status_label.cget("text"))
         self.assertEqual(Path(restarted.output_var.get()), source.with_name("saved_详情.xlsx"))
 
+    def test_saved_numbered_backup_keeps_its_directory_on_restart(self):
+        source = Path(self.temp.name) / "saved.xlsx"
+        source.touch()
+        backup = source.parent / "output-folder" / "saved_详情_backup_2.xlsx"
+        with patch.object(self.module, "load_settings", return_value={"input_file": str(source), "output_file": str(backup)}):
+            restarted = self.module.DesktopApp()
+        restarted.withdraw()
+        self.addCleanup(self.destroy_app, restarted)
+        self.assertEqual(Path(restarted.output_var.get()), backup)
+
     def test_zero_progress_blends_into_track_and_positive_progress_is_blue(self):
         self.assertEqual(self.app.progress.get(), 0)
         self.assertEqual(self.app.progress.cget("progress_color"), self.app.progress.cget("fg_color"))

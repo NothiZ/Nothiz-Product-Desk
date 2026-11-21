@@ -14,10 +14,11 @@ _ID = re.compile(r"_(\d{8,})\.html$")
 _CHECKPOINT = re.compile(r"captcha|punish|/login|login\.|sign[ -]?in|security verification|access denied|verify you are human|验证码|安全验证|请登录", re.I)
 _BADGES = {"认证", "verified", "certified"}
 
-# The page number can change before the client replaces the old product grid.
+# Single-page results may omit the paginator. On later pages, the page number can update before the grid.
 _RESULTS_READY = r"""
 ({number, previous, currentPage, productLink}) => {
-    if (document.querySelector(currentPage)?.textContent.trim() !== String(number)) return false;
+    const current = document.querySelector(currentPage)?.textContent.trim();
+    if ((current ?? "1") !== String(number)) return false;
     const ids = [...new Set(Array.from(document.querySelectorAll(productLink),
         link => new URL(link.href).pathname.match(/_(\d{8,})\.html$/)?.[1]).filter(Boolean))];
     return ids.length > 0 && (ids.length !== previous.length || ids.some((id, i) => id !== previous[i]));
@@ -63,8 +64,12 @@ def wait_for_results(page, number, previous):
 
 
 def advance_page(page, number, previous):
-    page.locator(NEXT_PAGE).click(timeout=10000)
+    next_page = page.locator(NEXT_PAGE)
+    if not next_page.count():
+        return False
+    next_page.click(timeout=10000)
     wait_for_results(page, number, previous)
+    return True
 
 
 def confirm_access(page, headless, confirm=None):
@@ -117,8 +122,9 @@ def collect_search(url, pages, consume, *, headless=False, confirm=None, stop_re
                 try:
                     if number == 1:
                         wait_for_results(page, number, previous)
-                    else:
-                        advance_page(page, number, previous)
+                    elif not advance_page(page, number, previous):
+                        if not confirm_access(page, headless, confirm) or not advance_page(page, number, previous):
+                            return
                 except BrowserTimeout:
                     if not confirm_access(page, headless, confirm):
                         raise RuntimeError(f"等待第 {number} 页的页码和商品列表更新超时") from None

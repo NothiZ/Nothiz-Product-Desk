@@ -3,6 +3,7 @@ import argparse
 import json
 import multiprocessing
 import os
+import re
 import time
 import webbrowser
 from pathlib import Path
@@ -644,7 +645,9 @@ class DesktopApp(ctk.CTk):
             self._status("输入文件不存在，请重新选择", "err")
         else:
             output = self._details_output_path(source)
-            if reset_output or Path(self.output_var.get()).name not in (output.name, f"{output.stem}_backup.xlsx"):
+            saved_name = Path(self.output_var.get()).name
+            backup_pattern = rf"{re.escape(output.stem)}(?:_backup(?:_[0-9]+)?)+{re.escape(output.suffix)}"
+            if reset_output or (saved_name != output.name and not re.fullmatch(backup_pattern, saved_name)):
                 self.output_var.set(str(output))
             self._status(f"已选择 {source.name}，点击开始生成", "idle")
 

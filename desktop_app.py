@@ -546,7 +546,7 @@ class DesktopApp(ctk.CTk):
         actions = ctk.CTkFrame(root, fg_color="transparent")
         actions.grid(row=2, column=0, sticky="ew", pady=(8 if compact else 12, 0))
         text(actions, "平台登录", color=MUTED).pack(side="left", padx=(2, 10))
-        login = button(actions, "阿里巴巴登录", lambda: self.start_login("alibaba", search_panel=True), 116)
+        login = button(actions, "阿里巴巴", lambda: self.start_login("alibaba", search_panel=True), 116)
         login.pack(side="left")
         self.editable_widgets.append((login, "normal"))
         self.search_start_button = button(actions, "开始搜索", self.start_search, 100, primary=True)
@@ -664,8 +664,8 @@ class DesktopApp(ctk.CTk):
         if not self.image_min_edited:
             self.image_vars["min_clear"].set(default_image_settings(mode)["min_clear"])
             self.image_min_edited = False
-        self.image_mode_hint.configure(text="取最多 8 张候选图，命名为 候选_01 起" if mode == IMAGE_MODES[1]
-                                       else "取前 5 张主图，命名为 主图_01 – 主图_05")
+        self.image_mode_hint.configure(text="取最多 8 张候选图，按 01.jpg、02.jpg… 命名" if mode == IMAGE_MODES[1]
+                                       else "取前 5 张主图，按 01.jpg、02.jpg… 命名")
 
     def choose_image_workbook(self):
         selected = filedialog.askopenfilename(parent=self, title="选择当前任务的选品结果表",

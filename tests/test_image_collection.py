@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 from openpyxl import Workbook, load_workbook
 from PIL import Image, ImageDraw
 
-from image_collection import collect_images, extract_images, page_status
+from image_collection import _has_saved_images, collect_images, extract_images, page_status
 from desktop_runtime import validate_image_settings
 
 
@@ -50,6 +50,20 @@ class ImageCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page_status("https://login.alibaba.com/", "Alibaba.com", ""), "需登录")
         self.assertEqual(page_status(LINK, "Alibaba.com", "<body><h1>该商品已下架</h1></body>"), "已下架")
 
+    def test_resume_checks_numbered_photos_by_mode_and_supports_legacy_names(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            legacy = folder / "主图_01.jpg"
+            legacy.touch()
+            self.assertTrue(_has_saved_images(folder, "主图", "1 / 1", same_mode=False))
+            self.assertFalse(_has_saved_images(folder, "候选", "1 / 1", same_mode=True))
+
+            numbered = folder / "01.jpg"
+            numbered.touch()
+            self.assertTrue(_has_saved_images(folder, "主图", "1 / 1", same_mode=True))
+            self.assertFalse(_has_saved_images(folder, "主图", "1 / 1", same_mode=False))
+            self.assertFalse(_has_saved_images(folder, "主图", "2 / 2", same_mode=True))
+
     async def test_collects_only_task_rows_saves_photos_and_resumes_terminal_rows(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -76,19 +90,20 @@ class ImageCollectionTests(unittest.IsolatedAsyncioTestCase):
                 result = await collect_images(settings, events.append)
                 self.assertEqual(fetch.await_count, 2)
             self.assertEqual((result["done"], result["failed"]), (1, 1))
-            with Image.open(output_dir / "奶瓶消毒器" / "SP01" / "主图_01.jpg") as saved:
+            with Image.open(output_dir / "奶瓶消毒器" / "SP01" / "01.jpg") as saved:
                 self.assertEqual(saved.format, "JPEG")
             book = load_workbook(input_file)
             try:
                 self.assertEqual([cell.value for cell in book.active[1]][-3:], ["采集状态", "清晰图数", "说明"])
-                self.assertEqual([book.active["D2"].value, book.active["D3"].value], ["已完成", "需登录"])
+                self.assertEqual([book.active["D2"].value, book.active["E2"].value, book.active["E3"].value],
+                                 ["常规产品图", "已完成", "需登录"])
             finally:
                 book.close()
             with patch("image_collection.Scraper.fetch_product", new=AsyncMock(return_value=("需登录", ""))) as fetch:
                 await collect_images(settings, events.append)
                 self.assertEqual(fetch.await_args.args[0], LINK.replace("8059", "8058"))
                 self.assertEqual(fetch.await_count, 1)
-            photo = output_dir / "奶瓶消毒器" / "SP01" / "主图_01.jpg"
+            photo = output_dir / "奶瓶消毒器" / "SP01" / "01.jpg"
             photo.unlink()
             with patch("image_collection.Scraper.fetch_product", new=AsyncMock(return_value=("需登录", ""))), \
                     patch("image_collection.image_responses", return_value=iter([(data.getvalue(), picture_url)])):
@@ -112,17 +127,17 @@ class ImageCollectionTests(unittest.IsolatedAsyncioTestCase):
 
             async def download(_scraper, _session, row, *_args):
                 row["folder"].mkdir(parents=True, exist_ok=True)
-                (row["folder"] / "主图_01.jpg").write_bytes(b"saved image")
+                (row["folder"] / "01.jpg").write_bytes(b"saved image")
                 return status, "1 / 1", ""
 
             with patch("image_collection._collect_product", new=AsyncMock(side_effect=download)) as collect:
                 await collect_images(settings)
-                self.assertTrue((skipped / "主图_01.jpg").is_file())
+                self.assertTrue((skipped / "01.jpg").is_file())
                 self.assertFalse(normal.exists())
 
                 skipped.rename(normal)
                 await collect_images(settings)
-                self.assertTrue((skipped / "主图_01.jpg").is_file())
+                self.assertTrue((skipped / "01.jpg").is_file())
                 self.assertFalse(normal.exists())
                 self.assertEqual(collect.await_count, 1)
 
@@ -132,13 +147,13 @@ class ImageCollectionTests(unittest.IsolatedAsyncioTestCase):
 
                 status = "已完成"
                 await collect_images({**settings, "min_clear": 1})
-                self.assertTrue((normal / "主图_01.jpg").is_file())
+                self.assertTrue((normal / "01.jpg").is_file())
                 self.assertFalse(skipped.exists())
 
                 skipped.mkdir()
                 with self.assertRaisesRegex(ValueError, "同时存在"):
                     await collect_images(settings)
-                self.assertTrue((normal / "主图_01.jpg").is_file())
+                self.assertTrue((normal / "01.jpg").is_file())
                 self.assertTrue(skipped.is_dir())
 
     def test_details_input_keeps_only_completed_image_rows(self):

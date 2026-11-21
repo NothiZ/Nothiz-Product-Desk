@@ -180,7 +180,7 @@ async def _read_page(page, url, _platform, *, confirm, include_description):
     return state, html
 
 
-def _save_images(session, urls, folder, label, limit, min_side):
+def _save_images(session, urls, folder, limit, min_side):
     saved = clear = 0
     seen = set()
     for url in urls[:limit]:
@@ -204,7 +204,7 @@ def _save_images(session, urls, folder, label, limit, min_side):
             except (OSError, ValueError, Image.DecompressionBombError):
                 continue
             folder.mkdir(parents=True, exist_ok=True)
-            path = folder / f"{label}_{saved + 1:02d}.jpg"
+            path = folder / f"{saved + 1:02d}.jpg"
             temporary = path.with_suffix(".jpg.tmp")
             try:
                 image.save(temporary, "JPEG", quality=94)
@@ -218,12 +218,15 @@ def _save_images(session, urls, folder, label, limit, min_side):
     return clear, saved
 
 
-def _has_saved_images(folder, label, score):
+def _has_saved_images(folder, label, score, *, same_mode):
     _, separator, count = score.partition("/")
     count = count.strip()
     if not separator or not re.fullmatch(r"[1-8]", count):
         return False
-    return all((folder / f"{label}_{number:02d}.jpg").is_file() for number in range(1, int(count) + 1))
+    numbers = range(1, int(count) + 1)
+    if any(folder.glob("[0-9][0-9].jpg")):
+        return same_mode and all((folder / f"{number:02d}.jpg").is_file() for number in numbers)
+    return all((folder / f"{label}_{number:02d}.jpg").is_file() for number in numbers)
 
 
 async def collect_images(settings, emit=lambda _event: None, confirm=None, stop_requested=lambda: False):
@@ -232,6 +235,7 @@ async def collect_images(settings, emit=lambda _event: None, confirm=None, stop_
     output = Path(settings["output_dir"])
     flat = settings["mode"] == IMAGE_MODES[1]
     label, limit = ("候选", 8) if flat else ("主图", 5)
+    result_headers = ("图片模式", *STATUS_HEADERS)
     counts = {"done": 0, "rejected": 0, "failed": 0}
     configure_browser_path()
 
@@ -260,7 +264,7 @@ async def collect_images(settings, emit=lambda _event: None, confirm=None, stop_
                     raise ValueError(f"{row['code']} 的普通目录和「-跳过」目录同时存在，请先核对图片文件夹。")
                 folders.update(keys)
                 row["folder"], row["skipped_folder"] = folder, skipped
-            for header in STATUS_HEADERS:
+            for header in result_headers:
                 if header not in columns:
                     columns[header] = sheet.max_column + 1
                     sheet.cell(1, columns[header], header)
@@ -275,7 +279,9 @@ async def collect_images(settings, emit=lambda _event: None, confirm=None, stop_
                     normal, skipped = row["folder"], row["skipped_folder"]
                     # Publish a new directory under the plain product code only after it qualifies.
                     folder = normal if normal.is_dir() else skipped
-                    resumed = settings["resume"] and row["status"] in _FINAL and _has_saved_images(folder, label, row["clear"])
+                    resumed = settings["resume"] and row["status"] in _FINAL and _has_saved_images(
+                        folder, label, row["clear"], same_mode=row["mode"] == settings["mode"]
+                    )
                     if resumed:
                         status, score, note = row["status"], row["clear"], row["note"]
                     else:
@@ -296,7 +302,7 @@ async def collect_images(settings, emit=lambda _event: None, confirm=None, stop_
                             resumed = False
                             status, note = "失败", f"图片目录重命名失败：{error}"
                     if not resumed:
-                        for header, value in zip(STATUS_HEADERS, (status, score, note)):
+                        for header, value in zip(result_headers, (settings["mode"], status, score, note)):
                             sheet.cell(row["row"], columns[header], value)
                         try:
                             save_workbook_atomic(workbook, workbook_path)
@@ -340,7 +346,7 @@ async def _collect_product(scraper, session, row, settings, workbook_path, flat,
             snapshot.parent.mkdir(parents=True, exist_ok=True)
             snapshot.write_text(html, encoding="utf-8")
         session.headers["Referer"] = url
-        clear, saved = await asyncio.to_thread(_save_images, session, urls, row["folder"], label, limit, settings["min_side"])
+        clear, saved = await asyncio.to_thread(_save_images, session, urls, row["folder"], limit, settings["min_side"])
     except (PageTimeout, TimeoutError):
         return "超时", "", _STATUS_NOTES["超时"]
     except Exception as error:

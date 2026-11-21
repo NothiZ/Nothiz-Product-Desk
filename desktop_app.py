@@ -12,7 +12,6 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import customtkinter as ctk
-from PIL import Image, ImageTk
 
 from desktop_runtime import (
     APP_TITLE, IMAGE_MODES, configure_user_data_dir, default_image_settings, default_search_settings, default_settings, launch_job, load_settings,
@@ -199,20 +198,6 @@ class DesktopApp(ctk.CTk):
 
     def _build_window(self, compact=False):
         controls = _Controls(compact)
-        header = ctk.CTkFrame(self, fg_color=CARD, corner_radius=0)
-        header.pack(fill="x")
-        logo_size = 20 if compact else 24
-        title_padding = (22, 0)
-        try:
-            with Image.open(resource_dir() / "assets" / "logo.png") as image:
-                self.logo = ImageTk.PhotoImage(image.resize((logo_size, logo_size), Image.Resampling.LANCZOS), master=header)
-            tk.Label(header, image=self.logo, bg=CARD, borderwidth=0).pack(
-                side="left", padx=(22, 10), pady=6 if compact else 11)
-            title_padding = (0, 0)
-        except OSError:
-            pass
-        controls.text(header, APP_TITLE, 15, True).pack(side="left", padx=title_padding)
-        ctk.CTkFrame(self, fg_color=BORDER, height=1, corner_radius=0).pack(fill="x")
         nav = ctk.CTkFrame(self, fg_color="transparent")
         inset = 16 if compact else 28
         nav.pack(fill="x", padx=inset, pady=(8, 0) if compact else (14, 0))

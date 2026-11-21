@@ -192,7 +192,7 @@ class DesktopApp(ctk.CTk):
         self._build_window(compact=height < 790)
         if self.wall_path and (task_workbook := self.wall_path.with_name("选品结果.xlsx")).is_file():
             self._select_image_workbook(task_workbook)
-        self.input_var.trace_add("write", self._refresh_input_status)
+        self.input_var.trace_add("write", lambda *_: self._refresh_input_status(reset_output=True))
         self.protocol("WM_DELETE_WINDOW", self.close_window)
         if startup_error:
             self.append_log(startup_error)
@@ -398,14 +398,18 @@ class DesktopApp(ctk.CTk):
         files = card(2)
         files.grid_columnconfigure(1, weight=1)
         files.grid_columnconfigure(0, minsize=84)
-        for row, label, variable, callback in [(0, "输入文件", self.input_var, self.choose_input), (1, "输出文件", self.output_var, self.choose_output)]:
+        for row, label, variable, button_label, callback in (
+            (0, "输入文件", self.input_var, "选择", self.choose_input),
+            (1, "输出文件", self.output_var, "选择目录", self.choose_output),
+        ):
             padding = first_row_padding if row == 0 else gap
             text(files, label, color=MUTED).grid(row=row, column=0, sticky="w", padx=(18, 0), pady=padding)
-            field = entry(files, textvariable=variable)
+            state = "normal" if row == 0 else "readonly"
+            field = entry(files, textvariable=variable, state=state)
             field.grid(row=row, column=1, sticky="ew", pady=padding)
-            choose = button(files, "选择", callback)
+            choose = button(files, button_label, callback)
             choose.grid(row=row, column=2, padx=(12, 18), pady=padding)
-            self.editable_widgets.extend([(field, "normal"), (choose, "normal")])
+            self.editable_widgets.extend([(field, state), (choose, "normal")])
 
         section(3, "生成设置")
         settings = card(4)
@@ -623,16 +627,26 @@ class DesktopApp(ctk.CTk):
         label.configure(text=text if self.search_task or self.image_task else f"● {text}",
                         text_color={"idle": MUTED, "run": ACCENT, "ok": OK, "err": ERR}[tone])
 
-    def _refresh_input_status(self, *_args):
+    @staticmethod
+    def _details_output_path(source, directory=None):
+        return (source.parent if directory is None else directory) / f"{source.stem}_详情.xlsx"
+
+    def _refresh_input_status(self, *, reset_output=False):
         if self.task:
             return
         filename = self.input_var.get().strip()
+        source = Path(filename)
         if not filename:
+            self.output_var.set("")
             self._status("请选择 Excel 文件", "idle")
-        elif not Path(filename).is_file():
+        elif not source.is_file():
+            self.output_var.set("")
             self._status("输入文件不存在，请重新选择", "err")
         else:
-            self._status(f"已选择 {Path(filename).name}，点击开始生成", "idle")
+            output = self._details_output_path(source)
+            if reset_output or Path(self.output_var.get()).name not in (output.name, f"{output.stem}_backup.xlsx"):
+                self.output_var.set(str(output))
+            self._status(f"已选择 {source.name}，点击开始生成", "idle")
 
     def _counts(self, total, done, failed, message="", rejected=0):
         if self.image_task:
@@ -661,9 +675,6 @@ class DesktopApp(ctk.CTk):
         selected = filedialog.askopenfilename(parent=self, title="选择商品链接 Excel", filetypes=[("Excel 工作簿", "*.xlsx")])
         if selected:
             self.input_var.set(selected)
-            if not self.output_var.get().strip():
-                source = Path(selected)
-                self.output_var.set(str(source.with_name(source.stem + "_output.xlsx")))
 
     def _change_image_mode(self, mode):
         if not self.image_min_edited:
@@ -761,15 +772,18 @@ class DesktopApp(ctk.CTk):
     def open_image_details(self):
         if self.task or self.image_details_button.cget("state") != "normal":
             return
-        path = Path(self.image_vars["input_file"].get())
-        self.input_var.set(str(path))
-        self.output_var.set(str(path.with_name(path.stem + "_详情.xlsx")))
+        self.input_var.set(self.image_vars["input_file"].get())
         self._select_tab("详情生成")
 
     def choose_output(self):
-        selected = filedialog.asksaveasfilename(parent=self, title="选择输出位置", defaultextension=".xlsx", filetypes=[("Excel 工作簿", "*.xlsx")])
+        source = Path(self.input_var.get().strip())
+        if not source.is_file():
+            messagebox.showinfo("请选择输入文件", "请先选择商品链接 Excel，程序会自动生成输出文件名。", parent=self)
+            return
+        selected = filedialog.askdirectory(parent=self, title="选择详情保存目录",
+                                           initialdir=str(Path(self.output_var.get()).parent), mustexist=True)
         if selected:
-            self.output_var.set(selected)
+            self.output_var.set(str(self._details_output_path(source, Path(selected))))
 
     def change_provider(self, _event=None):
         self.keys[self.current_provider] = self.key_var.get()

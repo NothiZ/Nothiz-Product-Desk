@@ -103,6 +103,25 @@ class DesktopUiTests(unittest.TestCase):
         self.app.input_var.set(str(source))
         self.assertIn("正在处理商品", self.app.status_label.cget("text"))
 
+    def test_manual_details_generation_uses_an_automatic_filename_in_the_selected_directory(self):
+        root = Path(self.temp.name).resolve()
+        source = root / "products.xlsx"
+        source.touch()
+        destination = root / "outputs"
+        destination.mkdir()
+        self.app.output_var.set(str(root / "last-job" / "选品结果_详情.xlsx"))
+        with patch.object(self.module.filedialog, "askopenfilename", return_value=str(source)):
+            self.app.choose_input()
+        self.assertEqual(Path(self.app.output_var.get()), root / "products_详情.xlsx")
+        with patch.object(self.module.filedialog, "askdirectory", return_value=str(destination)) as choose:
+            self.app.choose_output()
+        self.assertEqual(Path(choose.call_args.kwargs["initialdir"]), root)
+        expected = destination / "products_详情.xlsx"
+        self.assertEqual(Path(self.app.output_var.get()), expected)
+        self.assertFalse(expected.exists())
+        self.app.start_generation()
+        self.assertEqual(Path(self.launch.call_args.args[0]["output_file"]), expected)
+
     def test_saved_input_file_sets_the_initial_status(self):
         source = Path(self.temp.name) / "saved.xlsx"
         source.touch()
@@ -111,6 +130,7 @@ class DesktopUiTests(unittest.TestCase):
         restarted.withdraw()
         self.addCleanup(self.destroy_app, restarted)
         self.assertIn("已选择 saved.xlsx", restarted.status_label.cget("text"))
+        self.assertEqual(Path(restarted.output_var.get()), source.with_name("saved_详情.xlsx"))
 
     def test_zero_progress_blends_into_track_and_positive_progress_is_blue(self):
         self.assertEqual(self.app.progress.get(), 0)
@@ -258,6 +278,7 @@ class DesktopUiTests(unittest.TestCase):
         self.app.image_details_button.invoke()
         self.assertEqual(self.app.active_tab, "详情生成")
         self.assertEqual(self.app.input_var.get(), str(output))
+        self.assertEqual(Path(self.app.output_var.get()), output.with_name("选品结果_详情.xlsx"))
 
     def test_search_controls_match_the_details_styles(self):
         for search_widget, details_widget in (

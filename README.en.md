@@ -224,6 +224,14 @@ The release includes the Python runtime, the app's dependencies and Chromium. Af
 
 </details>
 
+## Roadmap
+
+- [ ] **Browser verification** — Reduce repeat checks and resume collection automatically after verification.
+- [ ] **Configurable blocked terms** — Let users set the list of terms to avoid in generated product details.
+- [ ] **Product page validation** — Check that links point to valid product detail pages before collection.
+- [ ] **More platforms** — Add collection support for Amazon, 1688 and other platforms over time.
+- [ ] **Image screening** — Use a vision model to identify product-focused images and filter out factory and workshop photos.
+
 <a name="run-from-source"></a>
 
 ## Run from source
